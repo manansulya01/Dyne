@@ -1,65 +1,48 @@
 import express, { Router } from "express";
+import * as communityController from "../controllers/communityController";
 
 const router: Router = express.Router();
 
 /**
  * GET /api/communities
- * Get all communities
+ * Get all communities for authenticated user
  */
-router.get("/", async (req, res) => {
-  try {
-    res.json({ message: "Get communities endpoint" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to get communities" });
-  }
-});
+router.get("/", communityController.getCommunities);
 
 /**
  * POST /api/communities
  * Create new community
  */
-router.post("/", async (req, res) => {
-  try {
-    res.json({ message: "Create community endpoint" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to create community" });
-  }
-});
+router.post("/", communityController.createCommunity);
 
 /**
- * GET /api/communities/:id
+ * GET /api/communities/:communityId
  * Get community by ID
  */
-router.get("/:id", async (req, res) => {
-  try {
-    res.json({ message: "Get community by ID endpoint" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to get community" });
-  }
-});
+router.get("/:communityId", communityController.getCommunity);
 
 /**
- * GET /api/communities/:id/threads
- * Get community threads
+ * PUT /api/communities/:communityId
+ * Update community
  */
-router.get("/:id/threads", async (req, res) => {
-  try {
-    res.json({ message: "Get community threads endpoint" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to get threads" });
-  }
-});
+router.put("/:communityId", communityController.updateCommunity);
 
 /**
- * GET /api/communities/:id/members
- * Get community members
+ * DELETE /api/communities/:communityId
+ * Delete community
  */
-router.get("/:id/members", async (req, res) => {
-  try {
-    res.json({ message: "Get community members endpoint" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to get members" });
-  }
-});
+router.delete("/:communityId", communityController.deleteCommunity);
+
+/**
+ * POST /api/communities/:communityId/members
+ * Add member to community
+ */
+router.post("/:communityId/members", communityController.addMember);
+
+/**
+ * DELETE /api/communities/:communityId/members
+ * Remove member from community
+ */
+router.delete("/:communityId/members", communityController.removeMember);
 
 export default router;

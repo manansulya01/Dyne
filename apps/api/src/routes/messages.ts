@@ -1,53 +1,48 @@
 import express, { Router } from "express";
+import * as messageController from "../controllers/messageController";
 
 const router: Router = express.Router();
 
 /**
- * GET /api/messages
- * Get messages for a channel
+ * GET /api/messages/channel/:channelId
+ * Get messages for a channel with pagination
  */
-router.get("/", async (req, res) => {
-  try {
-    res.json({ message: "Get messages endpoint" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to get messages" });
-  }
-});
+router.get("/channel/:channelId", messageController.getChannelMessages);
+
+/**
+ * GET /api/messages/direct/:recipientId
+ * Get direct messages with a user
+ */
+router.get("/direct/:recipientId", messageController.getDirectMessages);
 
 /**
  * POST /api/messages
- * Send a message
+ * Send a message (channel or direct)
  */
-router.post("/", async (req, res) => {
-  try {
-    res.json({ message: "Send message endpoint" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to send message" });
-  }
-});
+router.post("/", messageController.sendMessage);
 
 /**
- * GET /api/messages/:id
- * Get message by ID
+ * PUT /api/messages/:messageId
+ * Update message (edit content)
  */
-router.get("/:id", async (req, res) => {
-  try {
-    res.json({ message: "Get message by ID endpoint" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to get message" });
-  }
-});
+router.put("/:messageId", messageController.updateMessage);
 
 /**
- * DELETE /api/messages/:id
+ * DELETE /api/messages/:messageId
  * Delete message
  */
-router.delete("/:id", async (req, res) => {
-  try {
-    res.json({ message: "Delete message endpoint" });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to delete message" });
-  }
-});
+router.delete("/:messageId", messageController.deleteMessage);
+
+/**
+ * POST /api/messages/:messageId/reactions
+ * Add emoji reaction to message
+ */
+router.post("/:messageId/reactions", messageController.addReaction);
+
+/**
+ * DELETE /api/messages/reactions/:reactionId
+ * Remove reaction from message
+ */
+router.delete("/reactions/:reactionId", messageController.removeReaction);
 
 export default router;

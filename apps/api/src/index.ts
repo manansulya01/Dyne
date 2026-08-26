@@ -4,6 +4,12 @@ import dotenv from "dotenv";
 import { PrismaClient } from "@prisma/client";
 import { createServer } from "http";
 import { Server as SocketServer } from "socket.io";
+import { initializeSocketHandlers } from "./socket/handlers";
+import {
+  authenticateUser,
+  errorHandler,
+  requestLogger,
+} from "./middleware/index";
 
 dotenv.config();
 
@@ -14,9 +20,12 @@ const httpServer = createServer(app);
 const io = new SocketServer(httpServer, {
   cors: {
     origin: process.env.FRONTEND_URL || "http://localhost:3000",
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
   },
 });
+
+// Make io accessible to route handlers
+app.set("io", io);
 
 // Middleware
 app.use(express.json({ limit: "50mb" }));
@@ -27,8 +36,9 @@ app.use(
     credentials: true,
   })
 );
+app.use(requestLogger);
 
-// Health check
+// Health check (public)
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
@@ -37,45 +47,37 @@ app.get("/health", (req, res) => {
   });
 });
 
-// API Routes (to be implemented)
+// Public routes (auth doesn't require authentication yet for registration)
 app.use("/api/auth", require("./routes/auth").default);
-app.use("/api/users", require("./routes/users").default);
-app.use("/api/communities", require("./routes/communities").default);
-app.use("/api/posts", require("./routes/posts").default);
-app.use("/api/messages", require("./routes/messages").default);
-app.use("/api/events", require("./routes/events").default);
 
-// Socket.io event handlers
-io.on("connection", (socket) => {
-  console.log("New socket connection:", socket.id);
+// Protected routes (require authentication)
+app.use("/api/users", authenticateUser, require("./routes/users").default);
+app.use(
+  "/api/communities",
+  authenticateUser,
+  require("./routes/communities").default
+);
+app.use("/api/posts", authenticateUser, require("./routes/posts").default);
+app.use(
+  "/api/messages",
+  authenticateUser,
+  require("./routes/messages").default
+);
+app.use("/api/events", authenticateUser, require("./routes/events").default);
 
-  socket.on("disconnect", () => {
-    console.log("Socket disconnected:", socket.id);
-  });
+// Initialize Socket.io handlers
+initializeSocketHandlers(io);
 
-  // Message events
-  socket.on("message:send", (data) => {
-    io.emit("message:receive", data);
-  });
-
-  // Presence events
-  socket.on("user:online", (userId) => {
-    socket.broadcast.emit("user:status", { userId, status: "online" });
-  });
-
-  socket.on("user:offline", (userId) => {
-    socket.broadcast.emit("user:status", { userId, status: "offline" });
-  });
-
-  // Typing indicators
-  socket.on("user:typing", (data) => {
-    socket.broadcast.emit("user:typing", data);
-  });
-
-  socket.on("user:stop-typing", (data) => {
-    socket.broadcast.emit("user:stop-typing", data);
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    status: "error",
+    message: "Endpoint not found",
   });
 });
+
+// Error handler (should be last)
+app.use(errorHandler);
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
