@@ -1,0 +1,628 @@
+// Prisma Schema for Dyne - Student Life OS
+// Combines features from Discord, Reddit, Telegram, and academic systems
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ============================================================================
+// AUTHENTICATION & USERS
+// ============================================================================
+
+model User {
+  id                    String      @id @default(cuid())
+  clerkId              String      @unique
+  email                String      @unique
+  username             String      @unique
+  displayName          String?
+  avatar               String?
+  bio                  String?
+  coverImage           String?
+  
+  // University/Campus info
+  university           String?
+  campus               String?
+  enrollmentYear       String?
+  degree               String?
+  department           String?
+  
+  // Social
+  friends              User[]       @relation("Friends")
+  friendOf             User[]       @relation("Friends")
+  following            User[]       @relation("Following")
+  followers            User[]       @relation("Following")
+  
+  // Roles
+  roles                Role[]
+  
+  // Posts, Comments, Messages
+  posts                Post[]
+  comments             Comment[]
+  reactions            Reaction[]
+  
+  // Chat/Messaging
+  directMessages       DirectMessage[]
+  messagesSent         Message[]
+  messagesRead         MessageRead[]
+  
+  // Communities
+  communityMemberships CommunityMember[]
+  serverMemberships    ServerMember[]
+  
+  // Preferences
+  preferences          UserPreferences?
+  
+  // Moderation
+  banFrom              Ban[]
+  isActive             Boolean      @default(true)
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+model UserPreferences {
+  id                   String      @id @default(cuid())
+  userId              String      @unique
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  theme               String      @default("dark")
+  emailNotifications  Boolean     @default(true)
+  pushNotifications   Boolean     @default(true)
+  privateProfile      Boolean     @default(false)
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+// ============================================================================
+// COMMUNITIES & SERVERS (From Discord-like system)
+// ============================================================================
+
+model Community {
+  id                  String      @id @default(cuid())
+  name                String
+  slug                String      @unique
+  description         String?
+  icon                String?
+  coverImage          String?
+  
+  // Academic info
+  university          String?
+  department          String?
+  category            CommunityCategory @default(GENERAL)
+  
+  // Visibility
+  isPublic            Boolean     @default(true)
+  isVerified          Boolean     @default(false)
+  
+  // Relations
+  members             CommunityMember[]
+  threads             Thread[]
+  events              Event[]
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+enum CommunityCategory {
+  GENERAL
+  ACADEMIC
+  CLUBS
+  SPORTS
+  SOCIAL
+  EVENTS
+  STUDY_GROUPS
+  ALUMNI
+}
+
+model CommunityMember {
+  id                  String      @id @default(cuid())
+  userId              String
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  communityId         String
+  community           Community   @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  
+  role                MemberRole  @default(MEMBER)
+  joinedAt            DateTime    @default(now())
+  
+  @@unique([userId, communityId])
+}
+
+enum MemberRole {
+  ADMIN
+  MODERATOR
+  MEMBER
+}
+
+model Server {
+  id                  String      @id @default(cuid())
+  name                String
+  icon                String?
+  ownerId             String      @db.VarChar(255)
+  
+  members             ServerMember[]
+  channels            Channel[]
+  roles               Role[]
+  invites             Invite[]
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+model ServerMember {
+  id                  String      @id @default(cuid())
+  serverId            String
+  server              Server      @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  userId              String
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  roles               Role[]
+  nickname            String?
+  joinedAt            DateTime    @default(now())
+  
+  @@unique([serverId, userId])
+}
+
+model Channel {
+  id                  String      @id @default(cuid())
+  name                String
+  serverId            String
+  server              Server      @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  type                ChannelType
+  topic               String?
+  isPrivate           Boolean     @default(false)
+  
+  messages            Message[]
+  members             ServerMember[]
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  
+  @@unique([name, serverId])
+}
+
+enum ChannelType {
+  TEXT
+  VOICE
+  ANNOUNCEMENT
+}
+
+model Message {
+  id                  String      @id @default(cuid())
+  content             String?
+  authorId            String
+  author              User        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  
+  channelId           String
+  channel             Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  
+  fileUrl             String?
+  fileName            String?
+  fileSize            Int?
+  
+  voiceUrl            String?
+  voiceDuration       Int?
+  
+  isEdited            Boolean     @default(false)
+  isDeleted           Boolean     @default(false)
+  
+  reactions           MessageReaction[]
+  
+  parentMessageId     String?
+  parentMessage       Message?    @relation("MessageThreads", fields: [parentMessageId], references: [id])
+  replies             Message[]   @relation("MessageThreads")
+  
+  messagesRead        MessageRead[]
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+model MessageRead {
+  id                  String      @id @default(cuid())
+  userId              String
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageId           String
+  message             Message     @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  
+  readAt              DateTime    @default(now())
+  
+  @@unique([userId, messageId])
+}
+
+model MessageReaction {
+  id                  String      @id @default(cuid())
+  messageId           String
+  message             Message     @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  
+  emoji               String
+  count               Int         @default(1)
+  
+  @@unique([messageId, emoji])
+}
+
+// ============================================================================
+// DIRECT MESSAGING (From Telegram-like system)
+// ============================================================================
+
+model DirectMessage {
+  id                  String      @id @default(cuid())
+  participantIds      String[]
+  
+  messages            Message[]
+  lastMessageAt       DateTime?
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+// ============================================================================
+// POSTS & DISCUSSIONS (From Reddit-like system)
+// ============================================================================
+
+model Thread {
+  id                  String      @id @default(cuid())
+  title               String
+  content             String?
+  
+  authorId            String
+  author              User        @relation("ThreadAuthor", fields: [authorId], references: [id])
+  communityId         String
+  community           Community   @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  
+  type                ThreadType  @default(TEXT)
+  isPinned            Boolean     @default(false)
+  isLocked            Boolean     @default(false)
+  
+  imageUrl            String?
+  videoUrl            String?
+  
+  upvotes             Int         @default(0)
+  downvotes           Int         @default(0)
+  commentCount        Int         @default(0)
+  viewCount           Int         @default(0)
+  
+  posts               Post[]
+  comments            Comment[]
+  reactions           Reaction[]
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+enum ThreadType {
+  TEXT
+  IMAGE
+  VIDEO
+  LINK
+  POLL
+}
+
+model Post {
+  id                  String      @id @default(cuid())
+  content             String
+  
+  authorId            String
+  author              User        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  
+  threadId            String?
+  thread              Thread?     @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  
+  imageUrl            String?
+  videoUrl            String?
+  
+  upvotes             Int         @default(0)
+  downvotes           Int         @default(0)
+  
+  comments            Comment[]
+  reactions           Reaction[]
+  
+  isEdited            Boolean     @default(false)
+  isDeleted           Boolean     @default(false)
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+model Comment {
+  id                  String      @id @default(cuid())
+  content             String
+  
+  authorId            String
+  author              User        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  
+  postId              String?
+  post                Post?       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  
+  threadId            String?
+  thread              Thread?     @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  
+  parentCommentId     String?
+  parentComment       Comment?    @relation("CommentReplies", fields: [parentCommentId], references: [id])
+  replies             Comment[]   @relation("CommentReplies")
+  
+  upvotes             Int         @default(0)
+  downvotes           Int         @default(0)
+  
+  reactions           Reaction[]
+  
+  isEdited            Boolean     @default(false)
+  isDeleted           Boolean     @default(false)
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+model Reaction {
+  id                  String      @id @default(cuid())
+  userId              String
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  threadId            String?
+  thread              Thread?     @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  
+  postId              String?
+  post                Post?       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  
+  commentId           String?
+  comment             Comment?    @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  
+  type                ReactionType
+  emoji               String?
+  
+  createdAt           DateTime    @default(now())
+  
+  @@unique([userId, threadId])
+  @@unique([userId, postId])
+  @@unique([userId, commentId])
+}
+
+enum ReactionType {
+  UPVOTE
+  DOWNVOTE
+  LIKE
+  HAHA
+  WOW
+  SAD
+  ANGRY
+}
+
+// ============================================================================
+// CALENDAR & EVENTS
+// ============================================================================
+
+model Event {
+  id                  String      @id @default(cuid())
+  title               String
+  description         String?
+  
+  startTime           DateTime
+  endTime             DateTime
+  
+  location            String?
+  imageUrl            String?
+  
+  communityId         String?
+  community           Community?  @relation(fields: [communityId], references: [id], onDelete: SetNull)
+  
+  eventType           EventType   @default(SOCIAL)
+  
+  attendees           EventAttendee[]
+  
+  isPublic            Boolean     @default(true)
+  isCancelled         Boolean     @default(false)
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+enum EventType {
+  SOCIAL
+  ACADEMIC
+  CLUB
+  SPORTS
+  WORKSHOP
+  SEMINAR
+  CONCERT
+  OTHER
+}
+
+model EventAttendee {
+  id                  String      @id @default(cuid())
+  eventId             String
+  event               Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  
+  userId              String
+  
+  status              AttendeeStatus @default(PENDING)
+  
+  createdAt           DateTime    @default(now())
+  
+  @@unique([eventId, userId])
+}
+
+enum AttendeeStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  MAYBE
+}
+
+// ============================================================================
+// TASKS & PRODUCTIVITY
+// ============================================================================
+
+model Task {
+  id                  String      @id @default(cuid())
+  title               String
+  description         String?
+  
+  dueDate             DateTime?
+  priority            TaskPriority @default(MEDIUM)
+  status              TaskStatus  @default(TODO)
+  
+  userId              String
+  
+  tags                String[]
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// ============================================================================
+// ROLES & PERMISSIONS
+// ============================================================================
+
+model Role {
+  id                  String      @id @default(cuid())
+  name                String
+  serverId            String
+  server              Server      @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  color               String?
+  isDefault           Boolean     @default(false)
+  
+  permissions         Permission[]
+  users               User[]
+  members             ServerMember[]
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  
+  @@unique([name, serverId])
+}
+
+model Permission {
+  id                  String      @id @default(cuid())
+  roleId              String
+  role                Role        @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  
+  name                String
+  value               Int
+  
+  @@unique([roleId, name])
+}
+
+// ============================================================================
+// INVITATIONS
+// ============================================================================
+
+model Invite {
+  id                  String      @id @default(cuid())
+  code                String      @unique
+  serverId            String
+  server              Server      @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  
+  createdAt           DateTime    @default(now())
+  expiresAt           DateTime?
+  
+  maxUses             Int?
+  uses                Int         @default(0)
+}
+
+// ============================================================================
+// MODERATION
+// ============================================================================
+
+model Ban {
+  id                  String      @id @default(cuid())
+  userId              String
+  user                User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  reason              String?
+  bannedAt            DateTime    @default(now())
+  unbannedAt          DateTime?
+}
+
+// ============================================================================
+// ACADEMIC/ERP FEATURES
+// ============================================================================
+
+model Course {
+  id                  String      @id @default(cuid())
+  code                String      @unique
+  name                String
+  description         String?
+  
+  semester            String
+  credits             Int?
+  
+  instructor          String?
+  schedule            String?
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  
+  @@index([code])
+}
+
+model Attendance {
+  id                  String      @id @default(cuid())
+  courseId            String
+  
+  userId              String
+  date                DateTime
+  status              AttendanceStatus
+  
+  createdAt           DateTime    @default(now())
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+// ============================================================================
+// NOTIFICATIONS
+// ============================================================================
+
+model Notification {
+  id                  String      @id @default(cuid())
+  userId              String
+  
+  type                NotificationType
+  title               String
+  description         String?
+  
+  actionUrl           String?
+  actionType          String?
+  
+  isRead              Boolean     @default(false)
+  
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+enum NotificationType {
+  MESSAGE
+  MENTION
+  REPLY
+  EVENT_REMINDER
+  COMMUNITY_UPDATE
+  FRIEND_REQUEST
+  POST_UPVOTE
+  COMMENT_REPLY
+  EVENT_INVITATION
+}

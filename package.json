@@ -1,0 +1,25 @@
+{
+  "name": "dyne-monorepo",
+  "version": "1.0.0",
+  "description": "Dyne - Student Life OS combining Discord, Reddit, Telegram, and academic features",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/api",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "type-check": "turbo run type-check",
+    "test": "turbo run test"
+  },
+  "devDependencies": {
+    "turbo": "^1.10.16"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
