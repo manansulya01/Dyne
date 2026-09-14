@@ -1,5 +1,6 @@
 import { getUser } from "@/lib/auth/server";
 import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 import { DashboardClientLayout } from "./DashboardClientLayout";
 
 export default async function DashboardLayout({
@@ -8,17 +9,17 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const user = await getUser();
-  let profile = null;
-  
-  if (user) {
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-    profile = data;
+
+  if (!user) {
+    redirect("/login");
   }
 
-  return <DashboardClientLayout profile={profile}>{children}</DashboardClientLayout>;
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", user.id)
+    .single();
+
+  return <DashboardClientLayout profile={data}>{children}</DashboardClientLayout>;
 }

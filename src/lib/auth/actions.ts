@@ -27,7 +27,7 @@ export async function loginAction(formData: FormData) {
   }
   
   revalidatePath("/", "layout");
-  redirect("/home");
+  redirect("/feed");
 }
 
 export async function signupAction(formData: FormData) {
@@ -71,12 +71,27 @@ export async function signupAction(formData: FormData) {
       });
     
     if (profileError) {
+      if (profileError.code === "23505") {
+        return { error: { username: ["Username is already taken"] } };
+      }
       return { error: { _form: ["Failed to create profile. Please try again."] } };
+    }
+
+    const { data: studentRole } = await supabase
+      .from("roles")
+      .select("id")
+      .eq("name", "student")
+      .single();
+    if (studentRole) {
+      await supabase.from("user_roles").insert({
+        user_id: authData.user.id,
+        role_id: studentRole.id,
+      });
     }
   }
   
   revalidatePath("/", "layout");
-  redirect("/home");
+  redirect("/feed");
 }
 
 export async function logoutAction() {

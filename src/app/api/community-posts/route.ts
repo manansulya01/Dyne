@@ -13,13 +13,12 @@ export async function POST(request: Request) {
   const formData = await request.formData();
   const content = formData.get("content") as string;
   const communityId = formData.get("communityId") as string;
-  const mediaIds = formData.getAll("mediaIds") as string[];
 
   if (!communityId) {
     return NextResponse.json({ error: "Community ID required" }, { status: 400 });
   }
 
-  const validated = postCreateSchema.safeParse({ content, mediaIds });
+  const validated = postCreateSchema.safeParse({ content });
   if (!validated.success) {
     return NextResponse.json(
       { error: validated.error.flatten().fieldErrors },
@@ -47,7 +46,7 @@ export async function POST(request: Request) {
     }
   }
 
-  // Create post
+  // Create post (community posts are text-only; post_media belongs to feed posts).
   const { data: post, error: postError } = await supabase
     .from("community_posts")
     .insert({
@@ -57,8 +56,7 @@ export async function POST(request: Request) {
     })
     .select(`
       *,
-      author:profiles!community_posts_author_id_fkey(id, username, display_name, avatar_url),
-      media:post_media(*)
+      author:profiles!community_posts_author_id_fkey(id, username, display_name, avatar_url)
     `)
     .single();
 
@@ -66,34 +64,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: postError.message }, { status: 500 });
   }
 
-  // Link media if provided
-  if (validated.data.mediaIds && validated.data.mediaIds.length > 0) {
-    for (const mediaId of validated.data.mediaIds) {
-      const { data: media } = await supabase
-        .from("post_media")
-        .select("post_id")
-        .eq("id", mediaId)
-        .single();
-
-      if (media && media.post_id === null) {
-        await supabase
-          .from("post_media")
-          .update({ post_id: post.id })
-          .eq("id", mediaId);
-      }
-    }
-  }
-
-  // Refetch with media
-  const { data: fullPost } = await supabase
-    .from("community_posts")
-    .select(`
-      *,
-      author:profiles!community_posts_author_id_fkey(id, username, display_name, avatar_url),
-      media:post_media(*)
-    `)
-    .eq("id", post.id)
-    .single();
-
-  return NextResponse.json({ post: fullPost });
+  return NextResponse.json({ post: { ...post, media: [] } });
 }

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { communityCreateSchema } from "@/lib/validation";
 
 export async function GET(
   request: Request,
@@ -19,8 +20,7 @@ export async function GET(
     .select(`
       *,
       owner:profiles!communities_owner_id_fkey(id, username, display_name, avatar_url),
-      members:community_members(count),
-      member:community_members!inner(user_id)
+      members:community_members(count)
     `)
     .eq("id", id)
     .single();
@@ -30,33 +30,23 @@ export async function GET(
   }
 
   // Check if private and user is not a member
-  if (community.is_private) {
-    const { data: membership } = await supabase
+  let memberRole = "none";
+  {
+    const { data: memberData } = await supabase
       .from("community_members")
       .select("role")
       .eq("community_id", id)
       .eq("user_id", user.id)
       .single();
-
-    if (!membership) {
-      return NextResponse.json({ error: "This community is private" }, { status: 403 });
-    }
+    if (memberData) memberRole = memberData.role;
+  }
+  if (community.is_private && memberRole === "none" && community.owner_id !== user.id) {
+    return NextResponse.json({ error: "This community is private" }, { status: 403 });
   }
 
   const currentUserId = user.id;
-  const isMember = community.member?.some((m: { user_id: string }) => m.user_id === currentUserId) || false;
+  const isMember = memberRole !== "none";
   const isOwner = community.owner_id === currentUserId;
-
-  let memberRole = "none";
-  if (isMember) {
-    const { data: memberData } = await supabase
-      .from("community_members")
-      .select("role")
-      .eq("community_id", id)
-      .eq("user_id", currentUserId)
-      .single();
-    memberRole = memberData?.role || "member";
-  }
 
   return NextResponse.json({
     community: {
@@ -67,6 +57,79 @@ export async function GET(
       member_role: memberRole,
     },
   });
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const body = await request.json();
+  const validated = communityCreateSchema.partial().safeParse(body);
+
+  if (!validated.success) {
+    return NextResponse.json(
+      { error: validated.error.flatten().fieldErrors },
+      { status: 400 }
+    );
+  }
+
+  const { data: community } = await supabase
+    .from("communities")
+    .select("owner_id")
+    .eq("id", id)
+    .single();
+
+  if (!community) {
+    return NextResponse.json({ error: "Community not found" }, { status: 404 });
+  }
+
+  let canEdit = community.owner_id === user.id;
+  if (!canEdit) {
+    const { data: membership } = await supabase
+      .from("community_members")
+      .select("role")
+      .eq("community_id", id)
+      .eq("user_id", user.id)
+      .single();
+    canEdit = membership?.role === "moderator" || membership?.role === "owner";
+  }
+  if (!canEdit) {
+    const { data: admin } = await supabase
+      .from("user_roles")
+      .select("role:roles!inner(name)")
+      .eq("user_id", user.id)
+      .eq("roles.name", "admin");
+    canEdit = (admin?.length ?? 0) > 0;
+  }
+  if (!canEdit) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (validated.data.name !== undefined) updatePayload.name = validated.data.name;
+  if (validated.data.description !== undefined) updatePayload.description = validated.data.description;
+  if (validated.data.isPrivate !== undefined) updatePayload.is_private = validated.data.isPrivate;
+
+  const { data: updated, error } = await supabase
+    .from("communities")
+    .update(updatePayload)
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ community: updated });
 }
 
 export async function DELETE(

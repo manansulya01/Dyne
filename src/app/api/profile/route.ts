@@ -82,25 +82,18 @@ export async function PATCH(request: Request) {
     );
   }
 
-  if (validated.data.displayName) {
-    const { data: existing } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("username", validated.data.displayName)
-      .neq("id", user.id)
-      .single();
-
-    if (existing) {
-      return NextResponse.json({ error: { displayName: ["Username already taken"] } }, { status: 400 });
-    }
-  }
+  const updatePayload: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+  if (validated.data.displayName !== undefined) updatePayload.display_name = validated.data.displayName;
+  if (validated.data.bio !== undefined) updatePayload.bio = validated.data.bio;
+  if (validated.data.classGrade !== undefined) updatePayload.class_grade = validated.data.classGrade;
+  if (validated.data.house !== undefined) updatePayload.house = validated.data.house;
+  if (validated.data.interests !== undefined) updatePayload.interests = validated.data.interests;
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .update({
-      ...validated.data,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updatePayload)
     .eq("id", user.id)
     .select()
     .single();

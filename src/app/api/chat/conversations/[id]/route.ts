@@ -33,7 +33,7 @@ export async function GET(
   }
 
   // Check if user is a member
-  const isMember = conversation.members?.some((m: any) => m.user?.id === user.id);
+  const isMember = (conversation.members as Array<{ user: { id: string } | null }> | null)?.some((m) => m.user?.id === user.id);
   if (!isMember) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -78,9 +78,9 @@ export async function PATCH(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const updates: any = { updated_at: new Date().toISOString() };
-  if (name) updates.name = name;
-  if (image_url) updates.image_url = image_url;
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (typeof name === "string" && name.length > 0 && name.length <= 100) updates.name = name;
+  if (typeof image_url === "string" || image_url === null) updates.image_url = image_url;
 
   const { data: updatedConv, error } = await supabase
     .from("conversations")

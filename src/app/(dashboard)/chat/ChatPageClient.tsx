@@ -1,26 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
-import Image from "next/image";
-import { createBrowserClient } from "@supabase/ssr";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { createClient } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/Button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/Avatar";
-import { ScrollArea } from "@/components/ui/ScrollArea";
 import { Separator } from "@/components/ui/Separator";
 import { Textarea } from "@/components/ui/Textarea";
 import {
   Search,
   Send,
-  Users,
   Plus,
   MessageSquare,
-  ChevronLeft,
-  MoreHorizontal,
-  Paperclip,
-  Mic,
 } from "lucide-react";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -85,7 +76,6 @@ interface ChatPageClientProps {
 }
 
 export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
-  const router = useRouter();
   const [conversations, setConversations] = useState<ConversationData[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageData[]>([]);
@@ -95,10 +85,7 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const supabase = useMemo(() => createClient(), []);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -140,11 +127,14 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
   }, []);
 
   useEffect(() => {
+    // Initial conversations load only.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchConversations();
   }, [fetchConversations]);
 
   useEffect(() => {
     if (activeConversationId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       fetchMessages(activeConversationId);
     } else {
       setMessages([]);
@@ -155,23 +145,31 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
   useEffect(() => {
     if (!activeConversationId) return;
 
+    const convoId = activeConversationId;
     const messagesChannel = supabase
-      .channel(`messages:${activeConversationId}`)
+      .channel(`messages:${convoId}`)
       .on(
         "postgres_changes",
         {
           event: "INSERT",
           schema: "public",
           table: "messages",
-          filter: `conversation_id=eq.${activeConversationId}`,
+          filter: `conversation_id=eq.${convoId}`,
         },
         async (payload) => {
-          const newMessage = payload.new as MessageData;
-          // Fetch full message with sender
-          const response = await fetch(`/api/chat/conversations/${activeConversationId}/messages?limit=1`);
+          const incoming = payload.new as { id: string };
+          // Dedup: skip if we already have this message (reconnect replays).
+          let alreadyHave = false;
+          setMessages((prev) => {
+            alreadyHave = prev.some((m) => m.id === incoming.id);
+            return prev;
+          });
+          if (alreadyHave) return;
+          const response = await fetch(`/api/chat/conversations/${convoId}/messages?limit=1`);
           const data = await response.json();
           if (data.messages && data.messages.length > 0) {
-            setMessages(prev => [...prev, data.messages[data.messages.length - 1]]);
+            const latest = data.messages[data.messages.length - 1] as MessageData;
+            setMessages((prev) => (prev.some((m) => m.id === latest.id) ? prev : [...prev, latest]));
           }
         }
       )
@@ -196,7 +194,7 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
       supabase.removeChannel(messagesChannel);
       supabase.removeChannel(conversationsChannel);
     };
-  }, [activeConversationId, fetchConversations]);
+  }, [activeConversationId, fetchConversations, supabase]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -212,6 +210,9 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
 
       const data = await response.json();
       if (data.message) {
+        // Realtime will deliver the message; append immediately as well
+        // (deduped by id) so sending feels instant.
+        setMessages((prev) => (prev.some((m) => m.id === data.message.id) ? prev : [...prev, data.message]));
         setNewMessage("");
       }
     } catch (error) {
@@ -221,23 +222,20 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
     }
   };
 
-  const handleNewConversation = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const participantIds = formData.getAll("participantIds") as string[];
-
+  const handleNewConversation = async (participantIds: string[]) => {
     if (participantIds.length === 0) return;
 
     try {
       const response = await fetch("/api/chat/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ participantIds, type: "direct" }),
+        body: JSON.stringify({ participantIds, type: participantIds.length > 1 ? "group" : "direct" }),
       });
 
       const data = await response.json();
       if (data.conversation) {
         setShowNewChat(false);
+        await fetchConversations();
         setActiveConversationId(data.conversation.id);
       }
     } catch (error) {
@@ -279,6 +277,21 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
 
   return (
     <div className="flex h-full flex-col">
+      {/* Mobile conversation picker */}
+      <div className="md:hidden border-b p-2">
+        <label htmlFor="mobile-conversation" className="sr-only">Select conversation</label>
+        <select
+          id="mobile-conversation"
+          value={activeConversationId ?? ""}
+          onChange={(e) => setActiveConversationId(e.target.value || null)}
+          className="w-full min-h-[44px] rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Select a conversation…</option>
+          {conversations.map((c) => (
+            <option key={c.id} value={c.id}>{getConversationTitle(c)}</option>
+          ))}
+        </select>
+      </div>
       <div className="flex h-full flex-1 overflow-hidden">
         {/* Conversations Sidebar */}
         <aside className="w-80 border-r flex flex-col hidden md:flex">
@@ -300,7 +313,7 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
             </div>
           </div>
 
-          <ScrollArea className="flex-1">
+          <div className="flex-1 overflow-y-auto">
             <div className="p-2 space-y-1">
               {filteredConversations.map(conv => (
                 <ConversationItem
@@ -320,7 +333,7 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
                 </div>
               )}
             </div>
-          </ScrollArea>
+          </div>
         </aside>
 
         {/* Chat Area */}
@@ -347,11 +360,12 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
                   New Conversation
                 </Button>
               </div>
-          }
+            </div>
+          )}
         </div>
 
         {showNewChat && (
-          <NewChatModal onClose={() => setShowNewChat(false)} currentUserId={currentUserId} />
+          <NewChatModal onClose={() => setShowNewChat(false)} onCreate={handleNewConversation} currentUserId={currentUserId} />
         )}
       </div>
     </div>
@@ -416,10 +430,10 @@ function ChatWindow({
   messages: MessageData[]; 
   newMessage: string; 
   setNewMessage: (v: string) => void; 
-  onSendMessage: (e: React.FormEvent) => void; 
-  isSending: boolean; 
+  onSendMessage: (e: React.FormEvent) => void;
+  isSending: boolean;
   currentUserId: string;
-  messagesEndRef: React.RefObject<HTMLDivElement>;
+  messagesEndRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const title = conversation.type === "group" 
     ? conversation.name || "Group Chat"
@@ -444,49 +458,45 @@ function ChatWindow({
               : "Direct message"}
           </p>
         </div>
-        <Button variant="ghost" size="icon">
-          <MoreHorizontal className="h-5 w-5" />
-        </Button>
       </div>
 
-      <ScrollArea className="flex-1 p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4" role="log" aria-label="Messages" aria-live="polite">
         {messages.map(msg => (
-          <MessageBubble key={msg.id} message={msg} currentUserId={currentUserId} />
+          <MessageBubble key={msg.id} message={msg} currentUserId={currentUserId} isGroup={conversation.type === "group"} />
         ))}
         <div ref={messagesEndRef} />
-      </ScrollArea>
+      </div>
 
       <Separator />
       <form onSubmit={onSendMessage} className="p-4 space-y-2">
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="ghost" size="icon" className="h-10 w-10">
-            <Paperclip className="h-5 w-5" />
-          </Button>
+        <div className="flex items-end gap-2">
           <div className="flex-1 relative">
+            <label htmlFor="chat-message" className="sr-only">Type a message</label>
             <Textarea
+              id="chat-message"
               value={newMessage}
               onChange={e => setNewMessage(e.target.value)}
               placeholder="Type a message..."
-              className="min-h-[44px] max-h-32 pr-10 resize-none"
+              className="min-h-[44px] max-h-32 resize-none"
               disabled={isSending}
               onKeyDown={e => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  // Form will handle submit
+                  e.currentTarget.form?.requestSubmit();
                 }
               }}
             />
-            <Button type="submit" size="icon" disabled={!newMessage.trim() || isSending} className="h-10 w-10">
-              <Send className="h-5 w-5" />
-            </Button>
           </div>
+          <Button type="submit" size="icon" disabled={!newMessage.trim() || isSending} className="min-h-[44px] min-w-[44px]" aria-label="Send message">
+            <Send className="h-5 w-5" aria-hidden="true" />
+          </Button>
         </div>
       </form>
     </div>
   );
 }
 
-function MessageBubble({ message, currentUserId }: { message: MessageData; currentUserId: string }) {
+function MessageBubble({ message, currentUserId, isGroup }: { message: MessageData; currentUserId: string; isGroup: boolean }) {
   const isOwn = message.sender_id === currentUserId;
 
   return (
@@ -503,7 +513,7 @@ function MessageBubble({ message, currentUserId }: { message: MessageData; curre
           ? "bg-primary text-primary-foreground rounded-br-none" 
           : "bg-muted rounded-bl-none"
       )}>
-        {!isOwn && conversation.type === "group" && (
+        {!isOwn && isGroup && (
           <p className="text-xs font-medium mb-1">{message.sender?.display_name || message.sender?.username}</p>
         )}
         {message.content && <p className="whitespace-pre-wrap">{message.content}</p>}
@@ -520,8 +530,8 @@ function MessageBubble({ message, currentUserId }: { message: MessageData; curre
                 )}
               </div>
             ))}
+          </div>
           )}
-        )}
         <p className={cn("text-xs mt-1 opacity-60", isOwn ? "text-primary-foreground/70" : "text-muted-foreground")}>
           {formatMessageTime(message.created_at)}
         </p>
@@ -530,7 +540,7 @@ function MessageBubble({ message, currentUserId }: { message: MessageData; curre
   );
 }
 
-function NewChatModal({ onClose, currentUserId }: { onClose: () => void; currentUserId: string }) {
+function NewChatModal({ onClose, onCreate, currentUserId }: { onClose: () => void; onCreate: (ids: string[]) => void; currentUserId: string }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [users, setUsers] = useState<Array<{ id: string; username: string; display_name: string | null; avatar_url: string | null }>>([]);
@@ -539,16 +549,9 @@ function NewChatModal({ onClose, currentUserId }: { onClose: () => void; current
     // Fetch all users except current
     fetch("/api/people?limit=50")
       .then(res => res.json())
-      .then(data => setUsers(data.profiles.filter((u: any) => u.id !== currentUserId)))
+      .then(data => setUsers((data.profiles ?? []).filter((u: { id: string }) => u.id !== currentUserId)))
       .catch(console.error);
   }, [currentUserId]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (selectedUsers.length > 0) {
-      // This would be handled by the parent
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -594,8 +597,8 @@ function NewChatModal({ onClose, currentUserId }: { onClose: () => void; current
             ))}
         </div>
         <div className="flex gap-2 mt-4">
-          <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
-          <Button onClick={onClose} disabled={selectedUsers.length === 0} className="flex-1">
+          <Button variant="outline" onClick={onClose} className="flex-1 min-h-[44px]">Cancel</Button>
+          <Button onClick={() => onCreate(selectedUsers)} disabled={selectedUsers.length === 0} className="flex-1 min-h-[44px]">
             Start Chat ({selectedUsers.length})
           </Button>
         </div>

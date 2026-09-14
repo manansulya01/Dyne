@@ -42,54 +42,48 @@ interface EventsPageClientProps {
 
 export function EventsPageClient({ currentUserId }: EventsPageClientProps) {
   const [activeTab, setActiveTab] = useState("upcoming");
-  const [events, setEvents] = useState<EventData[]>([]);
+  const [allEvents, setAllEvents] = useState<EventData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  const fetchEvents = useCallback(async (isLoadMore = false) => {
-    if (isLoadMore && (!hasMore || isLoading)) return;
+  const fetchEvents = useCallback(async () => {
     setIsLoading(true);
-
+    setLoadError(null);
     try {
-      const params = new URLSearchParams({ limit: "20" });
-      if (cursor) params.set("cursor", cursor);
-      if (activeTab === "upcoming") params.set("upcoming", "true");
-
-      const response = await fetch(`/api/events?${params.toString()}`);
+      // Fetch a generous page; tab filtering happens client-side below.
+      const response = await fetch("/api/events?limit=50");
       const data = await response.json();
-
-      if (data.events) {
-        if (isLoadMore) {
-          setEvents(prev => [...prev, ...data.events]);
-        } else {
-          setEvents(data.events);
-        }
-        setCursor(data.cursor);
-        setHasMore(data.hasMore);
-      }
-    } catch (error) {
-      console.error("Failed to fetch events:", error);
+      if (!response.ok) throw new Error(data.error || "Failed to load events");
+      setAllEvents(data.events ?? []);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Failed to load events");
     } finally {
       setIsLoading(false);
     }
-  }, [cursor, activeTab, hasMore, isLoading]);
+  }, []);
 
   useEffect(() => {
+    // Initial events load only.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchEvents();
-  }, [activeTab]);
+  }, [fetchEvents]);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCursor(null);
-    setEvents([]);
-    setHasMore(true);
-  }, [activeTab]);
+  const now = new Date();
+  const visibleEvents =
+    activeTab === "upcoming"
+      ? allEvents.filter((e) => !isBefore(parseISO(e.start_time), now))
+      : activeTab === "past"
+        ? allEvents.filter((e) => isBefore(parseISO(e.start_time), now))
+        : allEvents.filter((e) => e.is_organizer || e.organizer_id === currentUserId);
 
   const handleRSVP = async (eventId: string, status: "going" | "interested" | "declined") => {
     if (!currentUserId) return;
+
+    const prev = allEvents;
+    setAllEvents((events) => events.map((e) =>
+      e.id === eventId ? { ...e, user_rsvp: status === "declined" ? null : status } : e
+    ));
 
     try {
       const response = await fetch(`/api/events/${eventId}/attendees`, {
@@ -98,13 +92,10 @@ export function EventsPageClient({ currentUserId }: EventsPageClientProps) {
         body: JSON.stringify({ status }),
       });
 
-      if (response.ok) {
-        setEvents(prev => prev.map(e => 
-          e.id === eventId ? { ...e, user_rsvp: status === "declined" ? null : status } : e
-        ));
-      }
+      if (!response.ok) setAllEvents(prev);
     } catch (error) {
       console.error("Failed to RSVP:", error);
+      setAllEvents(prev);
     }
   };
 
@@ -120,36 +111,26 @@ export function EventsPageClient({ currentUserId }: EventsPageClientProps) {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full mb-6">
         <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-          <TabsTrigger value="past">Past</TabsTrigger>
-          <TabsTrigger value="my-events">My Events</TabsTrigger>
+          <TabsTrigger value="upcoming" className="min-h-[44px]">Upcoming</TabsTrigger>
+          <TabsTrigger value="past" className="min-h-[44px]">Past</TabsTrigger>
+          <TabsTrigger value="my-events" className="min-h-[44px]">My Events</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="upcoming" className="mt-4">
-          <EventList events={events} currentUserId={currentUserId} onRSVP={handleRSVP} />
-          {hasMore && (
-            <Button
-              variant="outline"
-              className="w-full mt-4"
-              onClick={() => fetchEvents(true)}
-              disabled={isLoading}
-            >
-              {isLoading ? "Loading..." : "Load more"}
-            </Button>
+        <TabsContent value={activeTab} className="mt-4">
+          {isLoading && (
+            <div className="flex justify-center py-12" role="status" aria-label="Loading events">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
           )}
-        </TabsContent>
-
-        <TabsContent value="past" className="mt-4">
-          <p className="text-center text-muted-foreground py-8">Past events coming soon</p>
-        </TabsContent>
-
-        <TabsContent value="my-events" className="mt-4">
-          <p className="text-center text-muted-foreground py-8">My events coming soon</p>
+          {loadError && <p role="alert" className="text-center text-sm text-destructive py-8">{loadError}</p>}
+          {!isLoading && !loadError && (
+            <EventList events={visibleEvents} currentUserId={currentUserId} onRSVP={handleRSVP} />
+          )}
         </TabsContent>
       </Tabs>
 
       {showCreateModal && (
-        <CreateEventModal onClose={() => setShowCreateModal(false)} />
+        <CreateEventModal onClose={() => { setShowCreateModal(false); fetchEvents(); }} />
       )}
     </div>
   );
@@ -255,20 +236,36 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
     isPublic: true,
     maxAttendees: "",
   });
+  const [buildings, setBuildings] = useState<Array<{ id: string; name: string }>>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/campus/buildings?limit=100")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.buildings) setBuildings(data.buildings);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setFormError(null);
 
     try {
+      const toISO = (v: string) => (v ? new Date(v).toISOString() : "");
       const response = await fetch("/api/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...formData,
-          startTime: formData.startTime,
-          endTime: formData.endTime,
+          title: formData.title,
+          description: formData.description || undefined,
+          locationId: formData.locationId || undefined,
+          startTime: toISO(formData.startTime),
+          endTime: toISO(formData.endTime),
+          isPublic: formData.isPublic,
           maxAttendees: formData.maxAttendees ? parseInt(formData.maxAttendees) : undefined,
         }),
       });
@@ -277,11 +274,17 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
 
       if (data.event) {
         onClose();
+      } else if (response.status === 403) {
+        setFormError("Only teachers, staff, clubs, and admins can create events.");
       } else {
-        alert(data.error?._form?.[0] || "Failed to create event");
+        const firstError =
+          typeof data.error === "string"
+            ? data.error
+            : data.error?._form?.[0] || Object.values(data.error ?? {})[0] || "Failed to create event";
+        setFormError(Array.isArray(firstError) ? firstError[0] : String(firstError));
       }
-    } catch (error) {
-      alert("Failed to create event");
+    } catch {
+      setFormError("Network error. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -343,15 +346,18 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Location ID (optional)</label>
-            <input
-              type="text"
-              name="locationId"
+            <label htmlFor="event-location" className="block text-sm font-medium mb-1">Location (optional)</label>
+            <select
+              id="event-location"
               value={formData.locationId}
               onChange={e => setFormData({ ...formData, locationId: e.target.value })}
-              className="w-full p-2 border rounded-md"
-              placeholder="Campus building ID"
-            />
+              className="w-full p-2 border rounded-md min-h-[44px] bg-background"
+            >
+              <option value="">No specific building</option>
+              {buildings.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
@@ -377,6 +383,7 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
               <label htmlFor="isPublic" className="text-sm">Public event</label>
             </div>
           </div>
+          {formError && <p role="alert" className="text-sm text-destructive">{formError}</p>}
           <div className="flex gap-2 pt-4">
             <Button type="button" variant="outline" onClick={onClose} className="flex-1" disabled={isSubmitting}>
               Cancel

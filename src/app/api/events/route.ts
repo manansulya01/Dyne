@@ -109,7 +109,13 @@ export async function POST(request: Request) {
   const { data: event, error } = await supabase
     .from("events")
     .insert({
-      ...validated.data,
+      title: validated.data.title,
+      description: validated.data.description ?? null,
+      location_id: validated.data.locationId ?? null,
+      start_time: validated.data.startTime,
+      end_time: validated.data.endTime,
+      is_public: validated.data.isPublic ?? true,
+      max_attendees: validated.data.maxAttendees ?? null,
       organizer_id: user.id,
     })
     .select(`

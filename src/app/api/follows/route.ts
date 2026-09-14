@@ -66,7 +66,17 @@ export async function DELETE(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const targetUserId = searchParams.get("targetUserId");
+  let targetUserId = searchParams.get("targetUserId");
+
+  // Accept JSON body as well (client sends body for unfollow).
+  if (!targetUserId) {
+    try {
+      const body = await request.json();
+      targetUserId = body?.targetUserId ?? null;
+    } catch {
+      // no body — fall through to 400 below
+    }
+  }
 
   if (!targetUserId) {
     return NextResponse.json({ error: "Target user ID required" }, { status: 400 });

@@ -15,13 +15,15 @@ export async function GET(request: Request) {
   const cursor = searchParams.get("cursor");
   const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
 
+  // Escape wildcard characters so user search input can't inject patterns.
+  const escapeLike = (s: string) => s.replace(/[%_,\\]/g, (m) => `\\${m}`);
+
   let query = supabase
     .from("communities")
     .select(`
       *,
       owner:profiles!communities_owner_id_fkey(id, username, display_name, avatar_url),
-      members:community_members(count),
-      member:community_members!inner(user_id)
+      members:community_members(count)
     `)
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -31,7 +33,8 @@ export async function GET(request: Request) {
   }
 
   if (search) {
-    query = query.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
+    const safe = escapeLike(search);
+    query = query.or(`name.ilike.%${safe}%,description.ilike.%${safe}%`);
   }
 
   const { data: communities, error } = await query;
@@ -42,33 +45,31 @@ export async function GET(request: Request) {
 
   const currentUserId = user.id;
 
-  const transformedCommunities = communities?.map(community => {
-    const isMember = community.member?.some((m: { user_id: string }) => m.user_id === currentUserId) || false;
-    const isOwner = community.owner_id === currentUserId;
-    
-    return {
-      ...community,
-      member_count: community.members?.[0]?.count || 0,
-      is_member: isMember,
-      is_owner: isOwner,
-    };
-  }) || [];
-
-  // Get member roles in batch
-  if (transformedCommunities.length > 0) {
-    const communityIds = transformedCommunities.map(c => c.id);
+  // Batch membership lookup (avoids !inner which hides empty communities).
+  const communityIds = (communities ?? []).map((c) => c.id);
+  const membershipMap = new Map<string, string>();
+  if (communityIds.length > 0) {
     const { data: memberships } = await supabase
       .from("community_members")
       .select("community_id, role")
       .eq("user_id", currentUserId)
       .in("community_id", communityIds);
-
-    const membershipMap = new Map(memberships?.map(m => [m.community_id, m.role]) || []);
-    
-    transformedCommunities.forEach(c => {
-      c.member_role = membershipMap.get(c.id) || "none";
-    });
+    for (const m of memberships ?? []) membershipMap.set(m.community_id, m.role);
   }
+
+  const transformedCommunities = communities?.map(community => {
+    const memberRole = membershipMap.get(community.id);
+    const isMember = !!memberRole;
+    const isOwner = community.owner_id === currentUserId;
+
+    return {
+      ...community,
+      member_count: community.members?.[0]?.count || 0,
+      is_member: isMember,
+      is_owner: isOwner,
+      member_role: memberRole || "none",
+    };
+  }) || [];
 
   return NextResponse.json({
     communities: transformedCommunities,
@@ -98,7 +99,10 @@ export async function POST(request: Request) {
   const { data: community, error } = await supabase
     .from("communities")
     .insert({
-      ...validated.data,
+      name: validated.data.name,
+      slug: validated.data.slug,
+      description: validated.data.description ?? null,
+      is_private: validated.data.isPrivate ?? false,
       owner_id: user.id,
     })
     .select(`

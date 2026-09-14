@@ -47,7 +47,7 @@ export function LoginForm() {
     }
 
     router.refresh();
-    router.push("/home");
+    router.push("/feed");
   };
 
   return (

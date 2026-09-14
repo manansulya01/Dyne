@@ -30,10 +30,11 @@ export async function GET(request: Request) {
   }
 
   if (search) {
-    query = query.or(`username.ilike.%${search}%,display_name.ilike.%${search}%`);
+    const safe = search.replace(/[%_\\]/g, (m) => `\\${m}`).slice(0, 100);
+    query = query.or(`username.ilike.%${safe}%,display_name.ilike.%${safe}%`);
   }
 
-  if (role && role !== "all") {
+  if (role && ["student", "teacher", "staff", "club", "admin"].includes(role)) {
     query = query.eq("role", role);
   }
 

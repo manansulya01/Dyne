@@ -91,6 +91,12 @@ export function CommunityDetailClient({ initialCommunity, currentUserId }: Commu
   const [showCreatePost, setShowCreatePost] = useState(false);
   const [postContent, setPostContent] = useState("");
   const [isCreatingPost, setIsCreatingPost] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editName, setEditName] = useState(initialCommunity.name);
+  const [editDescription, setEditDescription] = useState(initialCommunity.description ?? "");
+  const [editIsPrivate, setEditIsPrivate] = useState(initialCommunity.is_private);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const fetchPosts = useCallback(async (isLoadMore = false) => {
     if (isLoadMore && (!postsHasMore || postsLoading)) return;
@@ -167,8 +173,35 @@ export function CommunityDetailClient({ initialCommunity, currentUserId }: Commu
     }
   };
 
-  const handleCreatePost = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSavingEdit(true);
+    setEditError(null);
+    try {
+      const response = await fetch(`/api/communities/${community.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editName,
+          description: editDescription || undefined,
+          isPrivate: editIsPrivate,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setEditError("Could not save changes");
+        return;
+      }
+      setCommunity((prev) => ({ ...prev, ...data.community }));
+      setShowEdit(false);
+    } catch {
+      setEditError("Network error. Please try again.");
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleCreatePost = async (e: React.FormEvent<HTMLFormElement>) => {    e.preventDefault();
     if (!postContent.trim() || isCreatingPost) return;
 
     setIsCreatingPost(true);
@@ -239,14 +272,13 @@ export function CommunityDetailClient({ initialCommunity, currentUserId }: Commu
                 </span>
               </div>
               <div className="flex items-center justify-center md:justify-start gap-2 mt-4">
-                {community.is_owner ? (
-                  <Button variant="outline" asChild>
-                    <a href={`/communities/${community.slug}/settings`}>
-                      <Settings className="h-4 w-4 mr-2" />
-                      Settings
-                    </a>
+                {isModerator ? (
+                  <Button variant="outline" onClick={() => setShowEdit((v) => !v)} aria-expanded={showEdit}>
+                    <Settings className="h-4 w-4 mr-2" />
+                    {showEdit ? "Close settings" : "Settings"}
                   </Button>
-                ) : community.is_member ? (
+                ) : null}
+                {community.is_owner ? null : community.is_member ? (
                   <Button variant="secondary" onClick={handleJoinLeave}>
                     <UserMinus className="h-4 w-4 mr-2" />
                     Leave
@@ -267,6 +299,50 @@ export function CommunityDetailClient({ initialCommunity, currentUserId }: Commu
           </div>
         </CardContent>
       </Card>
+
+      {showEdit && isModerator && (
+        <Card className="mb-6">
+          <CardContent className="pt-4">
+            <form onSubmit={handleSaveEdit} className="space-y-3">
+              <h2 className="font-semibold">Community settings</h2>
+              <div>
+                <label htmlFor="community-name" className="text-sm font-medium">Name</label>
+                <input
+                  id="community-name"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  maxLength={100}
+                  required
+                  className="w-full min-h-[44px] p-2 border rounded-md bg-background"
+                />
+              </div>
+              <div>
+                <label htmlFor="community-description" className="text-sm font-medium">Description</label>
+                <Textarea
+                  id="community-description"
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  maxLength={2000}
+                  rows={3}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm min-h-[44px]">
+                <input
+                  type="checkbox"
+                  checked={editIsPrivate}
+                  onChange={(e) => setEditIsPrivate(e.target.checked)}
+                  className="rounded"
+                />
+                Private community
+              </label>
+              {editError && <p role="alert" className="text-sm text-destructive">{editError}</p>}
+              <Button type="submit" disabled={isSavingEdit} className="min-h-[44px]">
+                {isSavingEdit ? "Saving…" : "Save changes"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-2">

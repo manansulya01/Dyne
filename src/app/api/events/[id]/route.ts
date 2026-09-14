@@ -112,12 +112,24 @@ export async function PATCH(
     }
   }
 
+  const camelToSnake: Record<string, string> = {
+    title: "title",
+    description: "description",
+    locationId: "location_id",
+    startTime: "start_time",
+    endTime: "end_time",
+    isPublic: "is_public",
+    maxAttendees: "max_attendees",
+  };
+  const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  for (const [key, value] of Object.entries(validated.data)) {
+    const column = camelToSnake[key];
+    if (column && value !== undefined) updatePayload[column] = value;
+  }
+
   const { data: updatedEvent, error } = await supabase
     .from("events")
-    .update({
-      ...validated.data,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updatePayload)
     .eq("id", id)
     .select(`
       *,

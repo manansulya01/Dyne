@@ -33,7 +33,15 @@ export async function GET(request: Request) {
   }
 
   if (author) {
-    query = query.eq("author.username", author);
+    const { data: authorProfile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("username", author)
+      .single();
+    if (!authorProfile) {
+      return NextResponse.json({ posts: [] });
+    }
+    query = query.eq("author_id", authorProfile.id);
   }
 
   const { data: posts, error } = await query;
@@ -68,6 +76,20 @@ export async function POST(request: Request) {
   if (!validated.success) {
     return NextResponse.json(
       { error: validated.error.flatten().fieldErrors },
+      { status: 400 }
+    );
+  }
+
+  if (!validated.data.content?.trim() && (!validated.data.mediaIds || validated.data.mediaIds.length === 0)) {
+    return NextResponse.json(
+      { error: { content: ["Post must include text or media"] } },
+      { status: 400 }
+    );
+  }
+
+  if (validated.data.mediaIds && validated.data.mediaIds.length > 4) {
+    return NextResponse.json(
+      { error: { mediaIds: ["Maximum 4 attachments per post"] } },
       { status: 400 }
     );
   }

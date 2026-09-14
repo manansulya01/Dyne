@@ -51,10 +51,29 @@ export async function POST(request: Request) {
       });
     
     if (profileError) {
+      if (profileError.code === "23505") {
+        return NextResponse.json(
+          { error: { username: ["Username is already taken"] } },
+          { status: 400 }
+        );
+      }
       return NextResponse.json(
         { error: { _form: ["Failed to create profile. Please try again."] } },
         { status: 500 }
       );
+    }
+
+    // Assign default student role (server-side only; never trust client input).
+    const { data: studentRole } = await supabase
+      .from("roles")
+      .select("id")
+      .eq("name", "student")
+      .single();
+    if (studentRole) {
+      await supabase.from("user_roles").insert({
+        user_id: authData.user.id,
+        role_id: studentRole.id,
+      });
     }
   }
   

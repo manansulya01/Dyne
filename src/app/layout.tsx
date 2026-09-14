@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Dyne - Your Campus Network",
-  description: "Your Campus. Your Community. Your Network. Private social network for Macro Vision Academy.",
+  title: "Dyne — Your Campus. Your Community. Your Network.",
+  description:
+    "Dyne is the private campus social network for Macro Vision Academy. Connect with classmates, join communities, discover events, chat in realtime, and share campus life.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

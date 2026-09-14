@@ -84,13 +84,17 @@ export function CommunitiesPageClient({ currentUserId }: CommunitiesPageClientPr
   const handleCreateCommunity = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const data = Object.fromEntries(formData);
 
     try {
       const response = await fetch("/api/communities", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          name: String(formData.get("name") || ""),
+          slug: String(formData.get("slug") || "").toLowerCase().trim(),
+          description: String(formData.get("description") || "") || undefined,
+          isPrivate: formData.get("isPrivate") === "on",
+        }),
       });
 
       const result = await response.json();

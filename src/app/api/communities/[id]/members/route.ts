@@ -140,11 +140,8 @@ export async function DELETE(
 
   const { id } = await params;
   const { searchParams } = new URL(request.url);
-  const targetUserId = searchParams.get("userId");
-
-  if (!targetUserId) {
-    return NextResponse.json({ error: "User ID required" }, { status: 400 });
-  }
+  // Default to self (leave) when no explicit target is given.
+  const targetUserId = searchParams.get("userId") || user.id;
 
   // Check permissions
   const { data: membership } = await supabase

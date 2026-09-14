@@ -22,11 +22,12 @@ export async function GET(request: Request) {
     .limit(limit);
 
   if (cursor) {
-    query = query.lt("created_at", cursor);
+    query = query.gt("name", cursor);
   }
 
   if (search) {
-    query = query.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
+    const safe = search.replace(/[%_\\]/g, (m) => `\\${m}`);
+    query = query.or(`name.ilike.%${safe}%,description.ilike.%${safe}%`);
   }
 
   if (category) {
@@ -49,7 +50,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     clubs: clubs || [],
     categories,
-    cursor: clubs?.[clubs.length - 1]?.created_at || null,
+    cursor: clubs?.[clubs.length - 1]?.name || null,
     hasMore: clubs?.length === limit,
   });
 }

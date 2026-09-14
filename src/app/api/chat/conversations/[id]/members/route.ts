@@ -127,7 +127,7 @@ export async function POST(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: Promise<{ id: string; memberId: string }> }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -136,7 +136,23 @@ export async function DELETE(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id, memberId } = await params;
+  const { id } = await params;
+
+  // Target member comes from query string (this route has no [memberId] segment).
+  const { searchParams } = new URL(request.url);
+  let memberId = searchParams.get("userId");
+  if (!memberId) {
+    try {
+      const body = await request.json();
+      memberId = body?.userId ?? null;
+    } catch {
+      // no body
+    }
+  }
+
+  if (!memberId) {
+    return NextResponse.json({ error: "User ID required" }, { status: 400 });
+  }
 
   // Check permissions
   const { data: membership } = await supabase

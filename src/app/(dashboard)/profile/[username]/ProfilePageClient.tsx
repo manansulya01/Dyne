@@ -71,11 +71,27 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
   const fetchProfile = useCallback(async () => {
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/profile?userId=${targetUsername === "@me" ? "" : targetUsername}`);
+      // /api/profile expects a UUID; resolve usernames via people search first.
+      let userId = targetUsername === "@me" ? "" : targetUsername;
+      if (targetUsername !== "@me") {
+        const searchRes = await fetch(`/api/people?search=${encodeURIComponent(targetUsername)}&limit=5`);
+        const searchData = await searchRes.json();
+        const match = (searchData.profiles ?? []).find(
+          (p: { username: string }) => p.username.toLowerCase() === targetUsername.toLowerCase()
+        );
+        if (!match) {
+          setProfile(null);
+          return;
+        }
+        userId = match.id;
+      }
+      const response = await fetch(`/api/profile?userId=${userId}`);
       const data = await response.json();
       if (data.profile) {
         setProfile(data.profile);
         setIsFollowing(data.profile.is_following);
+      } else {
+        setProfile(null);
       }
     } catch (error) {
       console.error("Failed to fetch profile:", error);
@@ -235,23 +251,31 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="posts">Posts</TabsTrigger>
-              <TabsTrigger value="reactions">Likes</TabsTrigger>
-              <TabsTrigger value="saved">Saved</TabsTrigger>
-              <TabsTrigger value="media">Media</TabsTrigger>
+              <TabsTrigger value="posts" className="min-h-[44px]">Posts</TabsTrigger>
+              <TabsTrigger value="reactions" className="min-h-[44px]">Likes</TabsTrigger>
+              <TabsTrigger value="saved" className="min-h-[44px]">Saved</TabsTrigger>
+              <TabsTrigger value="media" className="min-h-[44px]">Media</TabsTrigger>
             </TabsList>
 
             <TabsContent value="posts" className="mt-4">
               <ProfilePosts username={profile.username} />
             </TabsContent>
             <TabsContent value="reactions" className="mt-4">
-              <p className="text-center text-muted-foreground py-8">Liked posts coming soon</p>
+              {profile.is_own ? (
+                <ProfileLikedPosts />
+              ) : (
+                <p className="text-center text-muted-foreground py-8">Likes are private</p>
+              )}
             </TabsContent>
             <TabsContent value="saved" className="mt-4">
-              <p className="text-center text-muted-foreground py-8">Saved posts coming soon</p>
+              {profile.is_own ? (
+                <ProfileSavedPosts />
+              ) : (
+                <p className="text-center text-muted-foreground py-8">Saved posts are private</p>
+              )}
             </TabsContent>
             <TabsContent value="media" className="mt-4">
-              <p className="text-center text-muted-foreground py-8">Media coming soon</p>
+              <ProfileMedia username={profile.username} />
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -267,43 +291,61 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
 function ProfilePosts({ username }: { username: string }) {
   const [posts, setPosts] = useState<PostWithRelations[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
-
-  const fetchPosts = useCallback(async (isLoadMore = false) => {
-    if (isLoadMore && (!hasMore || isLoading)) return;
-    setIsLoading(true);
-
-    try {
-      const params = new URLSearchParams({ limit: "20" });
-      if (cursor) params.set("cursor", cursor);
-      params.set("author", username);
-
-      const response = await fetch(`/api/posts?${params.toString()}`);
-      const data = await response.json();
-
-      if (data.posts) {
-        if (isLoadMore) {
-          setPosts(prev => [...prev, ...data.posts]);
-        } else {
-          setPosts(data.posts);
-        }
-        setCursor(data.posts[data.posts.length - 1]?.created_at || null);
-        setHasMore(data.posts.length === 20);
-      }
-    } catch (error) {
-      console.error("Failed to fetch posts:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [username, cursor, hasMore, isLoading]);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchPosts();
-  }, [fetchPosts]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = new URLSearchParams({ limit: "20", author: username });
+        const response = await fetch(`/api/posts?${params.toString()}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Failed to load posts");
+        if (!cancelled) {
+          setPosts(data.posts ?? []);
+          setCursor(data.posts?.[data.posts.length - 1]?.created_at ?? null);
+          setHasMore((data.posts ?? []).length === 20);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load posts");
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [username]);
 
-  if (posts.length === 0 && !isLoading) {
+  const loadMore = async () => {
+    if (!hasMore || isLoadingMore || !cursor) return;
+    setIsLoadingMore(true);
+    try {
+      const params = new URLSearchParams({ limit: "20", author: username, cursor });
+      const response = await fetch(`/api/posts?${params.toString()}`);
+      const data = await response.json();
+      if (response.ok && data.posts) {
+        setPosts((prev) => [...prev, ...data.posts]);
+        setCursor(data.posts[data.posts.length - 1]?.created_at ?? null);
+        setHasMore(data.posts.length === 20);
+      }
+    } catch (e) {
+      console.error("Failed to fetch posts:", e);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  if (isLoading) {
+    return <p className="text-center text-muted-foreground py-8">Loading posts…</p>;
+  }
+
+  if (error) {
+    return <p role="alert" className="text-center text-destructive py-8">{error}</p>;
+  }
+
+  if (posts.length === 0) {
     return <p className="text-center text-muted-foreground py-8">No posts yet</p>;
   }
 
@@ -315,13 +357,98 @@ function ProfilePosts({ username }: { username: string }) {
       {hasMore && (
         <Button
           variant="outline"
-          className="w-full"
-          onClick={() => fetchPosts(true)}
-          disabled={isLoading}
+          className="w-full min-h-[44px]"
+          onClick={loadMore}
+          disabled={isLoadingMore}
         >
-          {isLoading ? "Loading..." : "Load more"}
+          {isLoadingMore ? "Loading..." : "Load more"}
         </Button>
       )}
+    </div>
+  );
+}
+
+function ProfileLikedPosts() {
+  const [posts, setPosts] = useState<PostWithRelations[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/posts/liked?limit=20")
+      .then((res) => res.json())
+      .then((data) => { if (!cancelled) setPosts(data.posts ?? []); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setIsLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (isLoading) return <p className="text-center text-muted-foreground py-8">Loading…</p>;
+  if (posts.length === 0) return <p className="text-center text-muted-foreground py-8">No liked posts yet</p>;
+  return (
+    <div className="space-y-4">
+      {posts.map((post) => (
+        <ProfilePostCard key={post.id} post={post} />
+      ))}
+    </div>
+  );
+}
+
+function ProfileSavedPosts() {
+  const [posts, setPosts] = useState<PostWithRelations[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/saved-posts?limit=20")
+      .then((res) => res.json())
+      .then((data) => { if (!cancelled) setPosts(data.posts ?? []); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setIsLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (isLoading) return <p className="text-center text-muted-foreground py-8">Loading…</p>;
+  if (posts.length === 0) return <p className="text-center text-muted-foreground py-8">No saved posts yet</p>;
+  return (
+    <div className="space-y-4">
+      {posts.map((post) => (
+        <ProfilePostCard key={post.id} post={post} />
+      ))}
+    </div>
+  );
+}
+
+function ProfileMedia({ username }: { username: string }) {
+  const [items, setItems] = useState<Array<{ id: string; media_type: "image" | "video"; url: string }>>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/posts?limit=50&author=${encodeURIComponent(username)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const media = ((data.posts ?? []) as PostWithRelations[]).flatMap((p) => p.media ?? []);
+        setItems(media);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setIsLoading(false); });
+    return () => { cancelled = true; };
+  }, [username]);
+
+  if (isLoading) return <p className="text-center text-muted-foreground py-8">Loading…</p>;
+  if (items.length === 0) return <p className="text-center text-muted-foreground py-8">No media yet</p>;
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {items.map((m) => (
+        <div key={m.id} className="relative aspect-square rounded-lg overflow-hidden bg-muted">
+          {m.media_type === "image" ? (
+            <Image src={m.url} alt="" fill className="object-cover" sizes="33vw" />
+          ) : (
+            <video src={m.url} className="absolute inset-0 h-full w-full object-cover" muted playsInline preload="metadata" />
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -346,7 +473,7 @@ function ProfilePostCard({ post }: { post: PostWithRelations }) {
             {post.media && post.media.length > 0 && (
               <div className="mt-2 grid gap-2 grid-cols-2">
                 {post.media.map((m, i) => (
-                  <div key={i} className="aspect-video rounded-lg overflow-hidden bg-muted">
+                  <div key={i} className="relative aspect-video rounded-lg overflow-hidden bg-muted">
                     {m.media_type === "image" ? (
                       <Image src={m.url} alt="" fill className="object-cover" sizes="50vw" />
                     ) : (

@@ -4,6 +4,16 @@ import { NextResponse } from "next/server";
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_AVATAR_SIZE = 5 * 1024 * 1024; // 5MB
+const ALLOWED_BUCKETS = [
+  "avatars",
+  "post-media",
+  "community-images",
+  "event-images",
+  "message-attachments",
+  "video-thumbnails",
+  "watch-videos",
+] as const;
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -15,14 +25,20 @@ export async function POST(request: Request) {
 
   const formData = await request.formData();
   const file = formData.get("file") as File;
-  const bucket = formData.get("bucket") as string || "post-media";
+  const rawBucket = (formData.get("bucket") as string) || "post-media";
 
   if (!file) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
   }
 
-  if (file.size > MAX_FILE_SIZE) {
-    return NextResponse.json({ error: "File too large. Max 50MB." }, { status: 400 });
+  if (!(ALLOWED_BUCKETS as readonly string[]).includes(rawBucket)) {
+    return NextResponse.json({ error: "Invalid bucket" }, { status: 400 });
+  }
+  const bucket = rawBucket;
+
+  const sizeLimit = bucket === "avatars" ? MAX_AVATAR_SIZE : MAX_FILE_SIZE;
+  if (file.size > sizeLimit) {
+    return NextResponse.json({ error: `File too large. Max ${sizeLimit / 1024 / 1024}MB.` }, { status: 400 });
   }
 
   const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);

@@ -50,7 +50,7 @@ export default function SignupForm() {
     }
 
     router.refresh();
-    router.push("/home");
+    router.push("/feed");
   };
 
   return (

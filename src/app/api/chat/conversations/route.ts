@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import { messageCreateSchema } from "@/lib/validation";
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -14,11 +13,25 @@ export async function GET(request: Request) {
   const cursor = searchParams.get("cursor");
   const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
 
+  // Only return conversations the current user belongs to — never trust
+  // client-supplied membership. Two-step: membership ids first, then fetch.
+  const { data: memberships } = await supabase
+    .from("conversation_members")
+    .select("conversation_id, last_read_at")
+    .eq("user_id", user.id);
+
+  const conversationIds = (memberships ?? []).map((m) => m.conversation_id);
+  if (conversationIds.length === 0) {
+    return NextResponse.json({ conversations: [], cursor: null, hasMore: false });
+  }
+
   let query = supabase
     .from("conversations")
     .select(`
       *,
-      members:conversation_members!inner(
+      members:conversation_members(
+        user_id,
+        last_read_at,
         user:profiles!conversation_members_user_id_fkey(id, username, display_name, avatar_url)
       ),
       last_message:messages!messages_conversation_id_fkey(
@@ -29,7 +42,9 @@ export async function GET(request: Request) {
         sender:profiles!messages_sender_id_fkey(id, username, display_name, avatar_url)
       )
     `)
+    .in("id", conversationIds)
     .order("updated_at", { ascending: false })
+    .order("created_at", { foreignTable: "messages", ascending: false })
     .limit(limit);
 
   if (cursor) {
@@ -45,19 +60,23 @@ export async function GET(request: Request) {
   const currentUserId = user.id;
 
   const transformedConversations = conversations?.map(conv => {
-    const otherMembers = conv.members?.filter((m: any) => m.user?.id !== currentUserId) || [];
+    const members = (conv.members ?? []) as Array<{ user_id: string; last_read_at: string | null; user: { id: string } | null }>;
+    const lastMessages = (conv.last_message ?? []) as Array<{ created_at: string }>;
+    const otherMembers = members.filter((m) => m.user?.id !== currentUserId) || [];
     const otherMember = otherMembers[0]?.user;
-    
+
+    // Unread = last message newer than our last_read_at.
     let unreadCount = 0;
-    const memberInfo = conv.members?.find((m: any) => m.user?.id === currentUserId);
-    if (memberInfo && conv.last_message) {
-      // This would need more complex logic to track unread
+    const myMembership = members.find((m) => m.user_id === currentUserId);
+    const latest = lastMessages[0];
+    if (latest && (!myMembership?.last_read_at || new Date(latest.created_at) > new Date(myMembership.last_read_at))) {
+      unreadCount = 1;
     }
 
     return {
       ...conv,
       other_member: otherMember,
-      unread_count: 0,
+      unread_count: unreadCount,
       last_message: conv.last_message?.[0] || null,
     };
   }) || [];
@@ -104,7 +123,7 @@ export async function POST(request: Request) {
 
     // Check if it has exactly the right members
     if (existingConv && existingConv.members.length === 2) {
-      const memberIds = existingConv.members.map((m: any) => m.user_id).sort();
+      const memberIds = (existingConv.members as Array<{ user_id: string }>).map((m) => m.user_id).sort();
       const targetIds = allParticipantIds.sort();
       if (JSON.stringify(memberIds) === JSON.stringify(targetIds)) {
         return NextResponse.json({ conversation: existingConv });
