@@ -1,0 +1,140 @@
+import { createClient } from "@/lib/supabase/server";
+import { NextResponse } from "next/server";
+
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"];
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
+export async function POST(request: Request) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const formData = await request.formData();
+  const file = formData.get("file") as File;
+  const bucket = formData.get("bucket") as string || "post-media";
+
+  if (!file) {
+    return NextResponse.json({ error: "No file provided" }, { status: 400 });
+  }
+
+  if (file.size > MAX_FILE_SIZE) {
+    return NextResponse.json({ error: "File too large. Max 50MB." }, { status: 400 });
+  }
+
+  const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
+  const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
+
+  if (!isImage && !isVideo) {
+    return NextResponse.json({ error: "Invalid file type. Only images and videos allowed." }, { status: 400 });
+  }
+
+  const fileExt = file.name.split(".").pop()?.toLowerCase() || "";
+  const fileName = `${crypto.randomUUID()}.${fileExt}`;
+  const filePath = `${user.id}/${fileName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(bucket)
+    .upload(filePath, file, {
+      cacheControl: "3600",
+      upsert: false,
+    });
+
+  if (uploadError) {
+    return NextResponse.json({ error: uploadError.message }, { status: 500 });
+  }
+
+  const { data: { publicUrl } } = supabase.storage
+    .from(bucket)
+    .getPublicUrl(filePath);
+
+  const mediaType = isImage ? "image" : "video";
+
+  const { data: mediaRecord, error: dbError } = await supabase
+    .from("post_media")
+    .insert({
+      post_id: null,
+      media_type: mediaType,
+      url: publicUrl,
+      thumbnail_url: isVideo ? publicUrl : null,
+      order_index: 0,
+    })
+    .select()
+    .single();
+
+  if (dbError) {
+    await supabase.storage.from(bucket).remove([filePath]);
+    return NextResponse.json({ error: dbError.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ media: mediaRecord });
+}
+
+export async function DELETE(request: Request) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const mediaId = searchParams.get("mediaId");
+  const bucket = searchParams.get("bucket") || "post-media";
+
+  if (!mediaId) {
+    return NextResponse.json({ error: "No media ID provided" }, { status: 400 });
+  }
+
+  const { data: media, error: fetchError } = await supabase
+    .from("post_media")
+    .select("*")
+    .eq("id", mediaId)
+    .single();
+
+  if (fetchError || !media) {
+    return NextResponse.json({ error: "Media not found" }, { status: 404 });
+  }
+
+  if (media.post_id) {
+    const { data: post } = await supabase
+      .from("posts")
+      .select("author_id")
+      .eq("id", media.post_id)
+      .single();
+
+    if (post?.author_id !== user.id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  } else {
+    const { data: tempMedia } = await supabase
+      .from("post_media")
+      .select("*")
+      .eq("id", mediaId)
+      .is("post_id", null)
+      .single();
+
+    if (!tempMedia) {
+      return NextResponse.json({ error: "Cannot delete media attached to a post" }, { status: 403 });
+    }
+  }
+
+  const filePath = media.url.split(`/${bucket}/`)[1];
+  if (filePath) {
+    await supabase.storage.from(bucket).remove([filePath]);
+  }
+
+  const { error: deleteError } = await supabase
+    .from("post_media")
+    .delete()
+    .eq("id", mediaId);
+
+  if (deleteError) {
+    return NextResponse.json({ error: deleteError.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
+}
