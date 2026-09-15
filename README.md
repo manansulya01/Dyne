@@ -41,6 +41,34 @@ Without this step, realtime subscriptions connect successfully but no
 `20240101000013_realtime_publication.sql` documents the same step and applies
 it automatically whenever the publication already exists.
 
+## Production deployment
+
+Dyne is a standard Next.js App Router application and deploys to any
+Next.js-capable host (e.g. Vercel). No Docker image or extra infrastructure
+is required.
+
+1. **Create a Supabase Cloud project** at <https://supabase.com/dashboard>.
+2. **Apply migrations**: link the project with the Supabase CLI and push
+   `supabase/migrations/` (01–13) — never use `db reset` against Cloud:
+   `supabase link` then `supabase db push`.
+3. **Enable Realtime** for `messages`, `conversation_members`, and
+   `notifications` (Dashboard > Database > Replication), or run the SQL in
+   `20240101000013_realtime_publication.sql` against the Cloud database.
+4. **Auth settings** (Dashboard > Authentication):
+   - Site URL = your production origin (e.g. `https://dyne.example.com`).
+   - Additional Redirect URLs must include
+     `https://dyne.example.com/api/auth/callback` and
+     `https://dyne.example.com/reset-password`.
+5. **Storage**: buckets and policies are created by migration 08; verify them
+   under Dashboard > Storage.
+6. **Environment variables** on the host (never commit these):
+   - `NEXT_PUBLIC_SUPABASE_URL` = Cloud project URL
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = Cloud anon/public key
+   - `SUPABASE_SERVICE_ROLE_KEY` = Cloud service-role key (server-only)
+   - `NEXT_PUBLIC_SITE_URL` = production origin (required in production)
+7. Deploy (`vercel --prod` or connect the GitHub repo in the Vercel
+   dashboard) and smoke-test signup → post → chat against Cloud.
+
 ## Scripts
 
 ```bash
