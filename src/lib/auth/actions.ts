@@ -111,8 +111,9 @@ export async function resetPasswordAction(formData: FormData) {
     return { error: validated.error.flatten().fieldErrors };
   }
   
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
   const { error } = await supabase.auth.resetPasswordForEmail(validated.data.email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/reset-password`,
+    redirectTo: `${siteUrl}/reset-password`,
   });
   
   if (error) {

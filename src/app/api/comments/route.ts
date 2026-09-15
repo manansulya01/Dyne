@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { commentCreateSchema } from "@/lib/validation";
+import { getCommentReactionCounts, getCommentReplyCounts } from "@/lib/db/counts";
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -23,9 +24,7 @@ export async function GET(request: Request) {
     .from("comments")
     .select(`
       *,
-      author:profiles!comments_author_id_fkey(id, username, display_name, avatar_url),
-      reaction_count:reactions(count),
-      replies:comments!comments_parent_comment_id_fkey(count)
+      author:profiles!comments_author_id_fkey(id, username, display_name, avatar_url)
     `)
     .eq("post_id", postId)
     .is("parent_comment_id", null)
@@ -43,10 +42,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const commentIds = (comments ?? []).map((c) => c.id);
+  const [reactionCounts, replyCounts] = await Promise.all([
+    getCommentReactionCounts(supabase, commentIds),
+    getCommentReplyCounts(supabase, commentIds),
+  ]);
+
   const transformedComments = comments?.map(comment => ({
     ...comment,
-    reaction_count: comment.reaction_count?.[0]?.count || 0,
-    reply_count: comment.replies?.[0]?.count || 0,
+    reaction_count: reactionCounts.get(comment.id) ?? 0,
+    reply_count: replyCounts.get(comment.id) ?? 0,
   })) || [];
 
   return NextResponse.json({ comments: transformedComments });
@@ -102,8 +107,7 @@ export async function POST(request: Request) {
     })
     .select(`
       *,
-      author:profiles!comments_author_id_fkey(id, username, display_name, avatar_url),
-      reaction_count:reactions(count)
+      author:profiles!comments_author_id_fkey(id, username, display_name, avatar_url)
     `)
     .single();
 

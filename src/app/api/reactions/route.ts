@@ -1,5 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { z } from "zod";
+
+const reactionBodySchema = z.object({
+  targetType: z.enum(["post", "comment", "video"]),
+  targetId: z.string().uuid(),
+  reactionType: z.string().min(1).max(30).default("like"),
+});
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -10,15 +17,16 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { targetType, targetId, reactionType = "like" } = body;
+  const validated = reactionBodySchema.safeParse(body);
 
-  if (!targetType || !targetId) {
-    return NextResponse.json({ error: "Target type and ID required" }, { status: 400 });
+  if (!validated.success) {
+    return NextResponse.json(
+      { error: validated.error.flatten().fieldErrors },
+      { status: 400 }
+    );
   }
 
-  if (!["post", "comment", "video"].includes(targetType)) {
-    return NextResponse.json({ error: "Invalid target type" }, { status: 400 });
-  }
+  const { targetType, targetId, reactionType } = validated.data;
 
   const { data: existing } = await supabase
     .from("reactions")

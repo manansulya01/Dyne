@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Dyne — Your Campus. Your Community. Your Network.
+
+Dyne is a private campus social network for Macro Vision Academy built with
+Next.js 16, React 19, TypeScript, Tailwind CSS 4, Supabase (PostgreSQL, Auth,
+Storage, Realtime), Zod, React Hook Form, and Lucide icons.
 
 ## Getting Started
 
-First, run the development server:
+1. Copy `.env.example` to `.env.local` and fill in your Supabase project values:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY` (server-only — never expose to the browser)
+   - `NEXT_PUBLIC_SITE_URL` (optional; falls back to the request origin)
+2. Apply the database migrations in `supabase/migrations/` (in order) to your
+   Supabase project, e.g. with the Supabase CLI (`supabase db push`) after
+   linking the project.
+3. Install dependencies and run the development server:
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) with your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Realtime setup (required for live chat/notifications)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Current Realtime servers stream the `supabase_realtime_messages_publication`
+publication (not the legacy `supabase_realtime` one). After deploying — and
+after every fresh `supabase db reset` / `supabase start` — run once against
+the live database (or enable the tables in the Supabase Dashboard under
+Database > Replication):
 
-## Learn More
+```sql
+ALTER PUBLICATION supabase_realtime_messages_publication
+  ADD TABLE messages, conversation_members, notifications;
+```
 
-To learn more about Next.js, take a look at the following resources:
+Without this step, realtime subscriptions connect successfully but no
+`postgres_changes` events are delivered. Migration
+`20240101000013_realtime_publication.sql` documents the same step and applies
+it automatically whenever the publication already exists.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Scripts
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run dev     # development server
+npm run lint    # ESLint (must report 0 errors)
+npm run build   # production build with type checking
+```
 
-## Deploy on Vercel
+## Security model
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Supabase Auth with cookie sessions (`@supabase/ssr`); protected routes
+  redirect unauthenticated users to `/login`.
+- Row Level Security on every table; server-side role checks via `user_roles`
+  (roles are never trusted from client input).
+- Private storage buckets by default with per-folder RLS policies.
+- All user input validated with Zod on the server.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+See `AGENTS.md` for the full engineering rules.

@@ -77,6 +77,7 @@ export async function POST(request: Request) {
       url: publicUrl,
       thumbnail_url: isVideo ? publicUrl : null,
       order_index: 0,
+      uploaded_by: user.id,
     })
     .select()
     .single();
@@ -126,15 +127,10 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   } else {
-    const { data: tempMedia } = await supabase
-      .from("post_media")
-      .select("*")
-      .eq("id", mediaId)
-      .is("post_id", null)
-      .single();
-
-    if (!tempMedia) {
-      return NextResponse.json({ error: "Cannot delete media attached to a post" }, { status: 403 });
+    // Staged (unattached) media may only be deleted by the user who uploaded
+    // it. Legacy rows without an uploader cannot be attributed and are kept.
+    if (media.uploaded_by !== user.id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
   }
 

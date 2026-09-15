@@ -40,18 +40,30 @@ export async function GET(
     return NextResponse.json({ error: "Video not available" }, { status: 403 });
   }
 
-  // Record a view (best-effort) and bump the counter.
-  await supabase.from("video_views").insert({
-    video_id: id,
-    user_id: user.id,
-    watched_duration: 0,
-  });
-  await supabase
-    .from("videos")
-    .update({ view_count: (video.view_count ?? 0) + 1 })
-    .eq("id", id);
+  // Record a view (best-effort), throttled to one counted view per user per
+  // hour to prevent obvious view-count abuse.
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data: recentView } = await supabase
+    .from("video_views")
+    .select("id")
+    .eq("video_id", id)
+    .eq("user_id", user.id)
+    .gte("created_at", oneHourAgo)
+    .limit(1)
+    .single();
 
-  return NextResponse.json({ video: { ...video, view_count: (video.view_count ?? 0) + 1 } });
+  let viewCount = video.view_count ?? 0;
+  if (!recentView) {
+    await supabase.from("video_views").insert({
+      video_id: id,
+      user_id: user.id,
+      watched_duration: 0,
+    });
+    viewCount += 1;
+    await supabase.from("videos").update({ view_count: viewCount }).eq("id", id);
+  }
+
+  return NextResponse.json({ video: { ...video, view_count: viewCount } });
 }
 
 export async function PATCH(

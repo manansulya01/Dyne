@@ -88,6 +88,11 @@ export async function POST(
     );
   }
 
+  // The body's conversation id must match the route — never trust either alone.
+  if (validated.data.conversationId !== id) {
+    return NextResponse.json({ error: "Conversation mismatch" }, { status: 400 });
+  }
+
   // Check membership
   const { data: membership } = await supabase
     .from("conversation_members")

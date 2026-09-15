@@ -37,13 +37,13 @@ export async function GET(
     }
   }
 
+  // Note: community posts are text discussions — reactions/comments tables
+  // reference feed posts only, so counts are structurally zero here.
   let query = supabase
     .from("community_posts")
     .select(`
       *,
-      author:profiles!community_posts_author_id_fkey(id, username, display_name, avatar_url),
-      reaction_count:reactions(count),
-      comment_count:comments(count)
+      author:profiles!community_posts_author_id_fkey(id, username, display_name, avatar_url)
     `)
     .eq("community_id", id)
     .is("deleted_at", null)
@@ -62,8 +62,8 @@ export async function GET(
 
   const transformedPosts = posts?.map(post => ({
     ...post,
-    reaction_count: post.reaction_count?.[0]?.count || 0,
-    comment_count: post.comment_count?.[0]?.count || 0,
+    reaction_count: 0,
+    comment_count: 0,
   })) || [];
 
   return NextResponse.json({

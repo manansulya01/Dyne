@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { postCreateSchema } from "@/lib/validation";
+import { getPostCounts } from "@/lib/db/counts";
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
@@ -20,9 +21,7 @@ export async function GET(request: Request) {
     .select(`
       *,
       author:profiles!posts_author_id_fkey(id, username, display_name, avatar_url),
-      media:post_media(*),
-      reaction_count:reactions(count),
-      comment_count:comments(count)
+      media:post_media(*)
     `)
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
@@ -50,11 +49,18 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // Batched counts (reactions are polymorphic with no FK, so they cannot
+  // be embedded via PostgREST relationship traversal).
+  const { reactions, comments } = await getPostCounts(
+    supabase,
+    (posts ?? []).map((p) => p.id)
+  );
+
   // Transform the data
   const transformedPosts = posts?.map(post => ({
     ...post,
-    reaction_count: post.reaction_count?.[0]?.count || 0,
-    comment_count: post.comment_count?.[0]?.count || 0,
+    reaction_count: reactions.get(post.id) ?? 0,
+    comment_count: comments.get(post.id) ?? 0,
   })) || [];
 
   return NextResponse.json({ posts: transformedPosts });

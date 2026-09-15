@@ -17,9 +17,14 @@ export async function POST(request: Request) {
   }
   
   const supabase = await createClient();
-  
+
+  // Fall back to the request origin when NEXT_PUBLIC_SITE_URL is unset so the
+  // redirect never becomes "undefined/reset-password".
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin;
+
   const { error } = await supabase.auth.resetPasswordForEmail(validated.data.email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/reset-password`,
+    redirectTo: `${siteUrl}/reset-password`,
   });
   
   if (error) {

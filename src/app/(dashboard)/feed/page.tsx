@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import { FeedClient } from "./Feed";
 import { createClient } from "@/lib/supabase/server";
+import { getPostCounts } from "@/lib/db/counts";
 import { PostWithRelations } from "@/types";
 
 export const metadata: Metadata = {
@@ -27,18 +28,21 @@ export default async function HomePage() {
     .select(`
       *,
       author:profiles!posts_author_id_fkey(id, username, display_name, avatar_url),
-      media:post_media(*),
-      reaction_count:reactions(count),
-      comment_count:comments(count)
+      media:post_media(*)
     `)
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .limit(20);
 
+  const { reactions, comments } = await getPostCounts(
+    supabase,
+    (posts ?? []).map((p) => p.id)
+  );
+
   const transformedPosts: PostWithRelations[] = posts?.map(post => ({
     ...post,
-    reaction_count: post.reaction_count?.[0]?.count || 0,
-    comment_count: post.comment_count?.[0]?.count || 0,
+    reaction_count: reactions.get(post.id) ?? 0,
+    comment_count: comments.get(post.id) ?? 0,
   })) || [];
 
   return <FeedClient initialPosts={transformedPosts} profile={profile} />;

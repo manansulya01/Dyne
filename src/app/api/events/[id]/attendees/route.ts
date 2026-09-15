@@ -96,40 +96,25 @@ export async function POST(
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }
 
-  const { data: event } = await supabase
-    .from("events")
-    .select("id, max_attendees")
-    .eq("id", id)
-    .single();
+  // Atomic RSVP via SECURITY INVOKER function: row-locks the event, enforces
+  // the privacy model (private events: organizer only) and capacity.
+  const { error: rsvpError } = await supabase.rpc("rsvp_event", {
+    p_event_id: id,
+    p_status: status,
+  });
 
-  if (!event) {
-    return NextResponse.json({ error: "Event not found" }, { status: 404 });
-  }
-
-  if (event.max_attendees) {
-    const { count } = await supabase
-      .from("event_attendees")
-      .select("*", { count: "exact", head: true })
-      .eq("event_id", id)
-      .eq("status", "going");
-
-    if (count && count >= event.max_attendees && status === "going") {
+  if (rsvpError) {
+    const msg = rsvpError.message || "";
+    if (msg.includes("EVENT_NOT_FOUND")) {
+      return NextResponse.json({ error: "Event not found" }, { status: 404 });
+    }
+    if (msg.includes("PRIVATE_EVENT")) {
+      return NextResponse.json({ error: "This event is private" }, { status: 403 });
+    }
+    if (msg.includes("EVENT_FULL")) {
       return NextResponse.json({ error: "Event is full" }, { status: 400 });
     }
-  }
-
-  const { error } = await supabase
-    .from("event_attendees")
-    .upsert({
-      event_id: id,
-      user_id: user.id,
-      status,
-    }, {
-      onConflict: "event_id,user_id",
-    });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: "Could not save RSVP" }, { status: 500 });
   }
 
   // Notify organizer

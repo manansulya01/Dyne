@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getPostCounts } from "@/lib/db/counts";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -91,9 +92,7 @@ export async function GET(request: Request) {
       post:posts!saved_posts_post_id_fkey(
         *,
         author:profiles!posts_author_id_fkey(id, username, display_name, avatar_url),
-        media:post_media(*),
-        reaction_count:reactions(count),
-        comment_count:comments(count)
+        media:post_media(*)
       )
     `)
     .eq("user_id", user.id)
@@ -110,10 +109,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const { reactions, comments } = await getPostCounts(
+    supabase,
+    (savedPosts ?? []).map((sp) => sp.post?.id).filter(Boolean) as string[]
+  );
+
   const posts = savedPosts?.map(sp => ({
     ...sp.post,
-    reaction_count: sp.post?.reaction_count?.[0]?.count || 0,
-    comment_count: sp.post?.comment_count?.[0]?.count || 0,
+    reaction_count: sp.post ? (reactions.get(sp.post.id) ?? 0) : 0,
+    comment_count: sp.post ? (comments.get(sp.post.id) ?? 0) : 0,
     saved_at: sp.created_at,
   })).filter(Boolean) || [];
 
