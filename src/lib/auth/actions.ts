@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { ensureProfile, fallbackUsername } from "@/lib/auth/ensureProfile";
 import { redirect } from "next/navigation";
 import { loginSchema, signupSchema, resetPasswordSchema, updatePasswordSchema } from "@/lib/validation";
 import { revalidatePath } from "next/cache";
@@ -17,15 +18,28 @@ export async function loginAction(formData: FormData) {
     return { error: validated.error.flatten().fieldErrors };
   }
   
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email: validated.data.email,
     password: validated.data.password,
   });
-  
+
   if (error) {
     return { error: { _form: [error.message] } };
   }
-  
+
+  if (data.user) {
+    const meta = (data.user.user_metadata || {}) as Record<string, unknown>;
+    const username =
+      typeof meta.username === "string" && meta.username.length >= 3
+        ? meta.username
+        : fallbackUsername(data.user.email || "user", data.user.id);
+    const displayName =
+      typeof meta.display_name === "string" && meta.display_name.length > 0
+        ? meta.display_name
+        : username;
+    await ensureProfile(data.user.id, username, displayName);
+  }
+
   revalidatePath("/", "layout");
   redirect("/feed");
 }
@@ -61,32 +75,17 @@ export async function signupAction(formData: FormData) {
   }
   
   if (authData.user) {
-    const { error: profileError } = await supabase
-      .from("profiles")
-      .insert({
-        id: authData.user.id,
-        username: validated.data.username,
-        display_name: validated.data.displayName,
-        role: "student",
-      });
-    
-    if (profileError) {
-      if (profileError.code === "23505") {
-        return { error: { username: ["Username is already taken"] } };
-      }
-      return { error: { _form: ["Failed to create profile. Please try again."] } };
-    }
+    const result = await ensureProfile(
+      authData.user.id,
+      validated.data.username,
+      validated.data.displayName
+    );
 
-    const { data: studentRole } = await supabase
-      .from("roles")
-      .select("id")
-      .eq("name", "student")
-      .single();
-    if (studentRole) {
-      await supabase.from("user_roles").insert({
-        user_id: authData.user.id,
-        role_id: studentRole.id,
-      });
+    if (!result.ok) {
+      if (result.field === "username") {
+        return { error: { username: [result.message] } };
+      }
+      return { error: { _form: [result.message] } };
     }
   }
   
