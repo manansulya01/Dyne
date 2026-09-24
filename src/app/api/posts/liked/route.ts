@@ -1,65 +1,64 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type ReactionDoc } from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
+import { getPostsByIds } from "@/lib/db/posts";
+import { toPostJSON } from "@/lib/db/contracts";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { parseLimitParam } from "@/lib/utils";
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let user;
+  try {
+    user = await requireSessionUser(db);
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
   const { searchParams } = new URL(request.url);
   const userId = searchParams.get("userId") || user.id;
   const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
   // Users can only see their own liked posts (reactions are private by user).
+  if (!objectIdSchema.safeParse(userId).success) {
+    return NextResponse.json({ error: "Invalid user ID" }, { status: 400 });
+  }
   if (userId !== user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  let reactionQuery = supabase
-    .from("reactions")
-    .select("target_id, created_at")
-    .eq("user_id", user.id)
-    .eq("target_type", "post")
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (cursor) reactionQuery = reactionQuery.lt("created_at", cursor);
-
-  const { data: reactions, error: reactionError } = await reactionQuery;
-  if (reactionError) {
-    return NextResponse.json({ error: reactionError.message }, { status: 500 });
+  const filter: Record<string, unknown> = {
+    userId: toObjectId(user.id),
+    targetType: "post",
+  };
+  if (cursor) {
+    const parsed = new Date(cursor);
+    if (!isNaN(+parsed)) filter.createdAt = { $lt: parsed };
   }
 
-  const postIds = (reactions ?? []).map((r) => r.target_id);
-  if (postIds.length === 0) {
+  const reactions = await col<ReactionDoc>(db, "reactions")
+    .find(filter as never)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+
+  if (reactions.length === 0) {
     return NextResponse.json({ posts: [] });
   }
 
-  const { data: posts, error } = await supabase
-    .from("posts")
-    .select(`
-      *,
-      author:profiles!posts_author_id_fkey(id, username, display_name, avatar_url),
-      media:post_media(*)
-    `)
-    .in("id", postIds)
-    .is("deleted_at", null);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  // Preserve reaction order.
-  const order = new Map(postIds.map((id, i) => [id, i]));
-  const sorted = (posts ?? []).sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  const posts = await getPostsByIds(
+    db,
+    reactions.map((r) => r.targetId)
+  );
 
   return NextResponse.json({
-    posts: sorted,
-    cursor: reactions?.[reactions.length - 1]?.created_at ?? null,
-    hasMore: (reactions?.length ?? 0) === limit,
+    posts: posts.map((p) => toPostJSON(p as unknown as Record<string, unknown>)),
+    cursor: reactions[reactions.length - 1]?.createdAt ?? null,
+    hasMore: reactions.length === limit,
   });
 }

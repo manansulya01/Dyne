@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -248,7 +249,7 @@ export function CampusPageClient() {
 
 function BuildingCard({ building }: { building: BuildingData }) {
   return (
-    <Card className="border">
+    <Link href={`/campus/${building.id}`} className="dyne-card dyne-card-hover block" aria-label={`Open ${building.name}`}>
       <CardContent className="pt-4">
         <div className="flex items-start gap-4">
           <div className="relative h-16 w-16 shrink-0 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
@@ -279,13 +280,13 @@ function BuildingCard({ building }: { building: BuildingData }) {
           </div>
         </div>
       </CardContent>
-    </Card>
+    </Link>
   );
 }
 
 function ClubCard({ club }: { club: ClubData }) {
   return (
-    <Card className="border">
+    <Card className="dyne-card">
       <CardContent className="pt-4">
         <div className="flex items-start gap-4">
           <div className="relative h-16 w-16 shrink-0 rounded-lg bg-muted flex items-center justify-center overflow-hidden">

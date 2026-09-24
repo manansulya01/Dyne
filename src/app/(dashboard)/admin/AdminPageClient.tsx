@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
@@ -131,9 +132,10 @@ export function AdminPageClient() {
       )}
 
       <Tabs defaultValue="reports" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="reports" className="min-h-[44px]">Reports</TabsTrigger>
           <TabsTrigger value="users" className="min-h-[44px]">Users</TabsTrigger>
+          <TabsTrigger value="content" className="min-h-[44px]">Content</TabsTrigger>
         </TabsList>
 
         <TabsContent value="reports" className="mt-4 space-y-3">
@@ -206,7 +208,87 @@ export function AdminPageClient() {
             </Card>
           ))}
         </TabsContent>
+
+        <TabsContent value="content" className="mt-4">
+          <AdminContent />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function AdminContent() {
+  const [tab, setTab] = useState<"blog" | "announcement" | "building" | "club">("blog");
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [blog, setBlog] = useState({ title: "", category: "", excerpt: "", content: "", coverImageUrl: "", isPublished: true, isFeatured: false });
+  const [ann, setAnn] = useState({ title: "", body: "", category: "", isPinned: false });
+  const [place, setPlace] = useState({ name: "", description: "" });
+
+  const post = async (url: string, body: unknown) => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        const first = typeof json?.error === "string" ? json.error : json?.error ? JSON.stringify(json.error) : "Failed";
+        throw new Error(first);
+      }
+      setStatus("Saved — live immediately, no mocks.");
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Content type">
+        {(["blog", "announcement", "building", "club"] as const).map((t) => (
+          <button key={t} onClick={() => { setTab(t); setStatus(null); }} aria-pressed={tab === t}
+            className={`min-h-[44px] rounded-xl px-4 text-sm font-medium capitalize ${tab === t ? "bg-primary text-primary-foreground" : "border border-border"}`}>
+            {t === "blog" ? "Blog article" : t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "blog" && (
+        <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); void post("/api/blogs", { ...blog, coverImageUrl: blog.coverImageUrl || undefined }); }}>
+          <Input value={blog.title} onChange={(e) => setBlog({ ...blog, title: e.target.value })} placeholder="Title" required maxLength={200} className="min-h-[48px]" aria-label="Article title" />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Input value={blog.category} onChange={(e) => setBlog({ ...blog, category: e.target.value })} placeholder="Category (e.g. Announcements)" maxLength={50} className="min-h-[44px]" aria-label="Category" />
+            <Input value={blog.coverImageUrl} onChange={(e) => setBlog({ ...blog, coverImageUrl: e.target.value })} placeholder="Cover image URL (optional)" className="min-h-[44px]" aria-label="Cover image URL" />
+          </div>
+          <Input value={blog.excerpt} onChange={(e) => setBlog({ ...blog, excerpt: e.target.value })} placeholder="Excerpt (optional)" maxLength={500} className="min-h-[44px]" aria-label="Excerpt" />
+          <textarea value={blog.content} onChange={(e) => setBlog({ ...blog, content: e.target.value })} placeholder="Article body…" required rows={6} maxLength={50000} className="w-full rounded-md border border-input bg-background p-3 text-sm" aria-label="Article body" />
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={blog.isPublished} onChange={(e) => setBlog({ ...blog, isPublished: e.target.checked })} /> Publish immediately</label>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={blog.isFeatured} onChange={(e) => setBlog({ ...blog, isFeatured: e.target.checked })} /> Feature on blogs page</label>
+          <Button type="submit" disabled={busy} className="min-h-[48px] w-full">{busy ? "Publishing…" : "Publish article"}</Button>
+        </form>
+      )}
+
+      {tab === "announcement" && (
+        <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); void post("/api/announcements", ann); }}>
+          <Input value={ann.title} onChange={(e) => setAnn({ ...ann, title: e.target.value })} placeholder="Announcement title" required maxLength={200} className="min-h-[48px]" aria-label="Announcement title" />
+          <textarea value={ann.body} onChange={(e) => setAnn({ ...ann, body: e.target.value })} placeholder="What should campus know?" required rows={4} maxLength={10000} className="w-full rounded-md border border-input bg-background p-3 text-sm" aria-label="Announcement body" />
+          <Input value={ann.category} onChange={(e) => setAnn({ ...ann, category: e.target.value })} placeholder="Category (optional)" maxLength={50} className="min-h-[44px]" aria-label="Category" />
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={ann.isPinned} onChange={(e) => setAnn({ ...ann, isPinned: e.target.checked })} /> Pin to schedule & explore</label>
+          <Button type="submit" disabled={busy} className="min-h-[48px] w-full">{busy ? "Posting…" : "Post announcement"}</Button>
+        </form>
+      )}
+
+      {(tab === "building" || tab === "club") && (
+        <form className="space-y-2" onSubmit={(e) => { e.preventDefault(); void post(tab === "building" ? "/api/campus/buildings" : "/api/campus/clubs", { name: place.name, description: place.description || undefined }); }}>
+          <Input value={place.name} onChange={(e) => setPlace({ ...place, name: e.target.value })} placeholder={tab === "building" ? "Building name" : "Club name"} required maxLength={100} className="min-h-[48px]" aria-label="Name" />
+          <textarea value={place.description} onChange={(e) => setPlace({ ...place, description: e.target.value })} placeholder="Description…" rows={3} maxLength={2000} className="w-full rounded-md border border-input bg-background p-3 text-sm" aria-label="Description" />
+          <Button type="submit" disabled={busy} className="min-h-[48px] w-full">{busy ? "Saving…" : `Add ${tab}`}</Button>
+        </form>
+      )}
+
+      {status && <p role="status" className="text-sm text-muted-foreground">{status}</p>}
+      <p className="text-xs text-muted-foreground">Timetable periods are managed on the <Link href="/timetable" className="underline">timetable page</Link> (staff and admin). Events are created from <Link href="/events" className="underline">events</Link>.</p>
     </div>
   );
 }

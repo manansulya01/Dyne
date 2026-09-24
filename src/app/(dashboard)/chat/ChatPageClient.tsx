@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { createClient } from "@/lib/supabase/browser";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { usePolling, POLL_INTERVALS } from "@/hooks/usePolling";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/Avatar";
@@ -85,7 +85,6 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const supabase = useMemo(() => createClient(), []);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -95,6 +94,9 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
+  // Auto-select guard lives in a ref so fetchConversations keeps a stable
+  // identity (no refetch loop when selection changes).
+  const autoSelectedRef = useRef(false);
   const fetchConversations = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -102,9 +104,14 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
       const data = await response.json();
       if (data.conversations) {
         setConversations(data.conversations);
-        // Auto-select first conversation if none selected
-        if (!activeConversationId && data.conversations.length > 0) {
-          setActiveConversationId(data.conversations[0].id);
+        // Auto-select first conversation once; never clobber an explicit
+        // selection (or a stale id left by a deleted conversation).
+        if (!autoSelectedRef.current) {
+          autoSelectedRef.current = true;
+          setActiveConversationId((current) => {
+            if (current) return current;
+            return data.conversations.length > 0 ? data.conversations[0].id : null;
+          });
         }
       }
     } catch (error) {
@@ -112,7 +119,7 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [activeConversationId]);
+  }, []);
 
   const fetchMessages = useCallback(async (conversationId: string) => {
     try {
@@ -141,60 +148,53 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
     }
   }, [activeConversationId, fetchMessages]);
 
-  // Realtime subscriptions
+  // Clear a stale selection (conversation deleted elsewhere) instead of
+  // rendering a missing thread.
   useEffect(() => {
+    if (
+      activeConversationId &&
+      conversations.length > 0 &&
+      !conversations.some((c) => c.id === activeConversationId)
+    ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveConversationId(null);
+      setMessages([]);
+    }
+  }, [conversations, activeConversationId]);
+
+  // Live updates via polling (see hooks/usePolling): refresh the active
+  // thread and the conversation list on a tick. Newly arrived messages merge
+  // by id so optimistic sends never duplicate. Structured so a push provider
+  // can replace the ticks without touching this component.
+  const pollActiveThread = useCallback(async () => {
     if (!activeConversationId) return;
+    try {
+      const response = await fetch(`/api/chat/conversations/${activeConversationId}/messages`);
+      const data = await response.json();
+      if (data.messages) {
+        setMessages((prev) => {
+          const known = new Set(prev.map((m) => m.id));
+          const fresh = (data.messages as MessageData[]).filter((m) => !known.has(m.id));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
+      }
+    } catch {
+      /* transient failures resolve on the next tick */
+    }
+  }, [activeConversationId]);
 
-    const convoId = activeConversationId;
-    const messagesChannel = supabase
-      .channel(`messages:${convoId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `conversation_id=eq.${convoId}`,
-        },
-        async (payload) => {
-          const incoming = payload.new as { id: string };
-          // Dedup: skip if we already have this message (reconnect replays).
-          let alreadyHave = false;
-          setMessages((prev) => {
-            alreadyHave = prev.some((m) => m.id === incoming.id);
-            return prev;
-          });
-          if (alreadyHave) return;
-          const response = await fetch(`/api/chat/conversations/${convoId}/messages?limit=1`);
-          const data = await response.json();
-          if (data.messages && data.messages.length > 0) {
-            const latest = data.messages[data.messages.length - 1] as MessageData;
-            setMessages((prev) => (prev.some((m) => m.id === latest.id) ? prev : [...prev, latest]));
-          }
-        }
-      )
-      .subscribe();
+  const pollConversations = useCallback(async () => {
+    try {
+      const response = await fetch("/api/chat/conversations");
+      const data = await response.json();
+      if (data.conversations) setConversations(data.conversations);
+    } catch {
+      /* transient failures resolve on the next tick */
+    }
+  }, []);
 
-    const conversationsChannel = supabase
-      .channel("conversations")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "conversations",
-        },
-        () => {
-          fetchConversations();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(messagesChannel);
-      supabase.removeChannel(conversationsChannel);
-    };
-  }, [activeConversationId, fetchConversations, supabase]);
+  usePolling(pollActiveThread, POLL_INTERVALS.chat, !!activeConversationId);
+  usePolling(pollConversations, POLL_INTERVALS.conversations);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -267,6 +267,12 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
     return title.includes(searchQuery.toLowerCase());
   });
 
+  // Stale ids (e.g. a conversation deleted elsewhere) resolve to undefined
+  // instead of crashing the non-null assertion that was here before.
+  const activeConversation = activeConversationId
+    ? conversations.find(c => c.id === activeConversationId) ?? null
+    : null;
+
   if (!currentUserId) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -338,9 +344,9 @@ export function ChatPageClient({ currentUserId }: ChatPageClientProps) {
 
         {/* Chat Area */}
         <div className="flex-1 flex flex-col min-w-0">
-          {activeConversationId ? (
+          {activeConversation ? (
             <ChatWindow
-              conversation={conversations.find(c => c.id === activeConversationId)!}
+              conversation={activeConversation}
               messages={messages}
               newMessage={newMessage}
               setNewMessage={setNewMessage}
@@ -443,27 +449,71 @@ function ChatWindow({
     ? conversation.image_url
     : conversation.other_member?.avatar_url;
 
+  const [msgSearch, setMsgSearch] = useState("");
+  const q = msgSearch.trim().toLowerCase();
+  const visibleMessages = q
+    ? messages.filter((m) => (m.content ?? "").toLowerCase().includes(q))
+    : messages;
+  // Group consecutive messages from the same sender (5-min window) for
+  // Discord-style density; date separators keep long histories scannable.
+  const groups: Array<{ key: string; day: string; items: typeof messages }> = [];
+  let lastKey = "";
+  for (const m of visibleMessages) {
+    const day = new Date(m.created_at).toDateString();
+    const k = `${day}|${m.sender_id}`;
+    const prev = visibleMessages[visibleMessages.indexOf(m) - 1];
+    const gap = prev ? +new Date(m.created_at) - +new Date(prev.created_at) : Infinity;
+    if (k !== lastKey || gap > 5 * 60 * 1000 || groups.length === 0) {
+      groups.push({ key: `${k}-${m.id}`, day, items: [m] });
+      lastKey = k;
+    } else {
+      groups[groups.length - 1].items.push(m);
+    }
+  }
+
   return (
-    <div className="flex flex-col h-full border-l">
-      <div className="flex items-center gap-3 p-4 border-b">
+    <div className="flex h-full flex-col border-l">
+      <div className="flex items-center gap-3 border-b p-4">
         <Avatar className="h-10 w-10">
           <AvatarImage src={avatar || ""} alt="" />
           <AvatarFallback name={title} />
         </Avatar>
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold truncate">{title}</p>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-semibold">{title}</p>
           <p className="text-xs text-muted-foreground">
             {conversation.type === "group" 
               ? `${conversation.members?.length || 0} members`
               : "Direct message"}
           </p>
         </div>
+        <div className="relative hidden sm:block">
+          <label htmlFor="msg-search" className="sr-only">Search in conversation</label>
+          <input
+            id="msg-search"
+            value={msgSearch}
+            onChange={(e) => setMsgSearch(e.target.value)}
+            placeholder="Search messages…"
+            maxLength={100}
+            className="min-h-[40px] w-44 rounded-xl border border-input bg-background px-3 text-sm"
+          />
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4" role="log" aria-label="Messages" aria-live="polite">
-        {messages.map(msg => (
-          <MessageBubble key={msg.id} message={msg} currentUserId={currentUserId} isGroup={conversation.type === "group"} />
+      <div className="flex-1 space-y-4 overflow-y-auto p-4" role="log" aria-label="Messages" aria-live="polite">
+        {q && (
+          <p className="text-xs text-muted-foreground" role="status">
+            {visibleMessages.length} of {messages.length} messages match “{msgSearch.trim()}”
+            {visibleMessages.length === 0 && " — try a different keyword."}
+          </p>
+        )}
+        {groups.map((g) => (
+          <div key={g.key}>
+            <GroupBubble group={g.items} currentUserId={currentUserId} isGroup={conversation.type === "group"} />
+          </div>
         ))}
+        {visibleMessages.length === 0 && !q && (
+          <p className="py-8 text-center text-sm text-muted-foreground">No messages yet. Say hello to start the conversation.</p>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
@@ -535,6 +585,29 @@ function MessageBubble({ message, currentUserId, isGroup }: { message: MessageDa
         <p className={cn("text-xs mt-1 opacity-60", isOwn ? "text-primary-foreground/70" : "text-muted-foreground")}>
           {formatMessageTime(message.created_at)}
         </p>
+      </div>
+    </div>
+  );
+}
+
+function GroupBubble({ group, currentUserId, isGroup }: { group: MessageData[]; currentUserId: string; isGroup: boolean }) {
+  const first = group[0];
+  const isOwn = first.sender_id === currentUserId;
+  return (
+    <div className={cn("flex gap-2", isOwn ? "justify-end" : "justify-start")}>
+      {!isOwn && (
+        <Avatar className="h-8 w-8 shrink-0">
+          <AvatarImage src={first.sender?.avatar_url || ""} alt="" />
+          <AvatarFallback name={first.sender?.display_name || first.sender?.username} />
+        </Avatar>
+      )}
+      <div className={cn("max-w-[78%] space-y-1", isOwn && "items-end")}>
+        {!isOwn && isGroup && (
+          <p className="px-1 text-xs font-semibold text-muted-foreground">{first.sender?.display_name || first.sender?.username}</p>
+        )}
+        {group.map((m) => (
+          <MessageBubble key={m.id} message={m} currentUserId={currentUserId} isGroup={false} />
+        ))}
       </div>
     </div>
   );

@@ -29,7 +29,11 @@ export function WatchPageClient() {
   const [error, setError] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [filter, setFilter] = useState<"all" | "mine">("all");
+  const [category, setCategory] = useState<string>("all");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  const categories = Array.from(new Set(videos.map((v) => v.category).filter(Boolean))) as string[];
+  const shown = category === "all" ? videos : videos.filter((v) => v.category === category);
 
   const fetchVideos = useCallback(async (mine: boolean) => {
     setIsLoading(true);
@@ -50,11 +54,10 @@ export function WatchPageClient() {
     // Initial load only: video list + current user id.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchVideos(filter === "mine");
-    import("@/lib/supabase/browser").then(async ({ createClient }) => {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      setCurrentUserId(user?.id ?? null);
-    });
+    fetch("/api/profile")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setCurrentUserId(data?.profile?.id ?? null))
+      .catch(() => {});
   }, [fetchVideos, filter]);
 
   const handleDelete = async (id: string) => {
@@ -66,9 +69,12 @@ export function WatchPageClient() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto p-4 space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl font-bold">Dyne Watch</h1>
+    <div className="mx-auto w-full max-w-5xl space-y-4 px-3 pb-6 pt-4 sm:px-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Dyne Watch</h1>
+          <p className="text-sm text-muted-foreground">Lectures, highlights, and student creativity.</p>
+        </div>
         <div className="flex gap-2">
           <Button
             variant={filter === "all" ? "default" : "outline"}
@@ -110,7 +116,22 @@ export function WatchPageClient() {
 
       {error && <p role="alert" className="text-sm text-destructive text-center">{error}</p>}
 
-      {!isLoading && !error && videos.length === 0 && (
+      {categories.length > 0 && (
+        <div className="flex gap-1.5 overflow-x-auto pb-1" role="group" aria-label="Video categories">
+          {["all", ...categories].map((c) => (
+            <button
+              key={c}
+              onClick={() => setCategory(c)}
+              aria-pressed={category === c}
+              className={`min-h-[40px] shrink-0 rounded-full px-4 text-sm font-medium ${category === c ? "bg-primary text-primary-foreground" : "border border-border text-muted-foreground"}`}
+            >
+              {c === "all" ? "All" : c}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!isLoading && !error && shown.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             <Play className="h-10 w-10 mx-auto mb-3 opacity-50" aria-hidden="true" />
@@ -121,7 +142,7 @@ export function WatchPageClient() {
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {videos.map((v) => (
+        {shown.map((v) => (
           <Card key={v.id} className="overflow-hidden">
             <Link href={`/watch/${v.id}`} className="block">
               <div className="relative aspect-video bg-muted">

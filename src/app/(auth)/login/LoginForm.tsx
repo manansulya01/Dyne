@@ -25,29 +25,34 @@ export function LoginForm() {
     setIsLoading(true);
     setError(null);
 
-    const formData = new FormData();
-    formData.append("email", data.email);
-    formData.append("password", data.password);
+    try {
+      const formData = new FormData();
+      formData.append("email", data.email);
+      formData.append("password", data.password);
 
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      body: formData,
-    });
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        body: formData,
+      });
 
-    const result = await response.json();
+      const result = await response.json();
 
-    if (result.error) {
-      if (result.error._form) {
-        setError(result.error._form[0]);
-      } else {
-        setError("Invalid credentials");
+      if (result.error) {
+        if (result.error._form) {
+          setError(result.error._form[0]);
+        } else {
+          setError("Invalid credentials");
+        }
+        return;
       }
-      setIsLoading(false);
-      return;
-    }
 
-    router.refresh();
-    router.push("/feed");
+      router.refresh();
+      router.push("/feed");
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

@@ -52,3 +52,30 @@ export function truncate(text: string, length: number): string {
   if (text.length <= length) return text;
   return text.slice(0, length).trim() + "...";
 }
+
+/**
+ * Parse a `?limit=` query param into a safe positive integer.
+ * Non-numeric, zero, and negative inputs fall back to `fallback`;
+ * values above `max` are clamped. Never returns NaN/0/negative, so it is
+ * always safe to pass directly to a Mongo `.limit()` call.
+ */
+export function parseLimitParam(
+  raw: string | null,
+  fallback = 20,
+  max = 50
+): number {
+  const parsed = parseInt(raw ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+}
+
+/**
+ * Clamp an already-parsed limit for direct use in a Mongo `.limit()` call.
+ * Guards library internals against NaN/negative/huge values even when
+ * callers forget to use parseLimitParam.
+ */
+export function safeLimit(limit: unknown, max = 50, fallback = 20): number {
+  return typeof limit === "number" && Number.isFinite(limit) && limit > 0
+    ? Math.min(Math.floor(limit), max)
+    : fallback;
+}

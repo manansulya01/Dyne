@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import { EventsPageClient } from "./EventsPageClient";
-import { createClient } from "@/lib/supabase/server";
+import { getDb } from "@/lib/mongo/client";
+import { getSessionUser } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
   title: "Events - Dyne",
@@ -8,18 +9,7 @@ export const metadata: Metadata = {
 };
 
 export default async function EventsPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return <EventsPageClient currentUserId={null} />;
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("id", user.id)
-    .single();
-
-  return <EventsPageClient currentUserId={profile?.id || null} />;
+  const db = await getDb();
+  const user = await getSessionUser(db);
+  return <EventsPageClient currentUserId={user?.id || null} />;
 }

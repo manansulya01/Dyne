@@ -1,87 +1,159 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdmin } from "../stats/route";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type UserDoc } from "@/lib/mongo/collections";
+import { objectIdSchema } from "@/lib/mongo/ids";
+import { setUserRole, suspendUser, unsuspendUser } from "@/lib/db/users";
+import { toProfileJSON } from "@/lib/db/contracts";
+import { toHttpError } from "@/lib/auth/session";
+import { parseLimitParam } from "@/lib/utils";
+import { requireAdminUser } from "../stats/route";
+import { requirePermission } from "@/lib/permissions";
 
 const roleUpdateSchema = z.object({
-  userId: z.string().uuid(),
+  userId: objectIdSchema,
   role: z.enum(["student", "teacher", "staff", "club", "admin"]),
 });
 
-export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+const suspendSchema = z.object({
+  userId: objectIdSchema,
+  until: z.string().datetime(),
+});
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (!(await requireAdmin(supabase, user.id))) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+const unsuspendSchema = z.object({
+  userId: objectIdSchema,
+});
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function requireAdminWithPerm(db: unknown, permission: string) {
+  const admin = await requireAdminUser(db as never);
+  requirePermission(admin.role, permission as never);
+  return admin;
+}
+
+export async function GET(request: Request) {
+  const db = await getDb();
+  await ensureIndexes(db);
+
+  try {
+    await requireAdminWithPerm(db, "users.view");
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
   const { searchParams } = new URL(request.url);
-  const search = searchParams.get("search")?.trim() ?? "";
+  const search = (searchParams.get("search") || "").trim().slice(0, 100);
   const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
-  let query = supabase
-    .from("profiles")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
+  const filter: Record<string, unknown> = {};
   if (search) {
-    const safe = search.replace(/[%_\\]/g, (m) => `\\${m}`);
-    query = query.or(`username.ilike.%${safe}%,display_name.ilike.%${safe}%`);
+    const rx = { $regex: escapeRegExp(search), $options: "i" };
+    filter.$or = [{ username: rx }, { displayName: rx }];
   }
-  if (cursor) query = query.lt("created_at", cursor);
-
-  const { data: users, error } = await query;
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (cursor) {
+    const parsed = new Date(cursor);
+    if (!isNaN(+parsed)) filter.createdAt = { $lt: parsed };
   }
 
-  return NextResponse.json({ users: users ?? [] });
+  const rows = await col<UserDoc>(db, "users")
+    .find(filter as never)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+
+  return NextResponse.json({
+    users: rows.map((u) => toProfileJSON(u as unknown as Record<string, unknown>)),
+  });
 }
 
 // Assign a role — admin only, server-side. Never trust client-supplied admin flags elsewhere.
 export async function PATCH(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (!(await requireAdmin(supabase, user.id))) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  let admin;
+  try {
+    admin = await requireAdminWithPerm(db, "users.manage");
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
   const validated = roleUpdateSchema.safeParse(body);
   if (!validated.success) {
     return NextResponse.json({ error: validated.error.flatten().fieldErrors }, { status: 400 });
   }
 
-  const { data: role } = await supabase
-    .from("roles")
-    .select("id")
-    .eq("name", validated.data.role)
-    .single();
-
-  if (!role) {
-    return NextResponse.json({ error: "Unknown role" }, { status: 400 });
+  // Admins cannot demote themselves (prevents accidental last-admin lockout).
+  if (validated.data.userId === admin.id && validated.data.role !== "admin") {
+    return NextResponse.json(
+      { error: "Admins cannot remove their own admin role" },
+      { status: 400 }
+    );
   }
 
-  // Update denormalized profiles.role + canonical user_roles mapping.
-  await supabase.from("profiles").update({ role: validated.data.role }).eq("id", validated.data.userId);
-  const { error } = await supabase.from("user_roles").insert({
-    user_id: validated.data.userId,
-    role_id: role.id,
-  });
+  const updated = await setUserRole(db, validated.data.userId, validated.data.role);
+  if (!updated) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+  return NextResponse.json({ success: true });
+}
 
-  if (error && error.code !== "23505") {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+export async function POST(request: Request) {
+  const db = await getDb();
+  await ensureIndexes(db);
+
+  try {
+    await requireAdminWithPerm(db, "users.suspend");
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
+  const body = await request.json().catch(() => null);
+  const validated = suspendSchema.safeParse(body);
+  if (!validated.success) {
+    return NextResponse.json({ error: validated.error.flatten().fieldErrors }, { status: 400 });
+  }
+
+  const until = new Date(validated.data.until);
+  if (isNaN(until.getTime())) {
+    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
+  }
+
+  const updated = await suspendUser(db, validated.data.userId, until);
+  if (!updated) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+  return NextResponse.json({ success: true });
+}
+
+export async function DELETE(request: Request) {
+  const db = await getDb();
+  await ensureIndexes(db);
+
+  try {
+    await requireAdminWithPerm(db, "users.restore");
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
+  }
+
+  const body = await request.json().catch(() => null);
+  const validated = unsuspendSchema.safeParse(body);
+  if (!validated.success) {
+    return NextResponse.json({ error: validated.error.flatten().fieldErrors }, { status: 400 });
+  }
+
+  const updated = await unsuspendUser(db, validated.data.userId);
+  if (!updated) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
   return NextResponse.json({ success: true });
 }

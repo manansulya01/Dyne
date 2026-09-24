@@ -1,64 +1,44 @@
-import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { getDb } from "@/lib/mongo/client";
+import { col, type UserDoc } from "@/lib/mongo/collections";
+import { toObjectId } from "@/lib/mongo/ids";
+import {
+  getSessionUser,
+  requireSessionUser,
+  type SessionUser,
+} from "@/lib/auth/session";
 
-export async function getUser() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  return user;
+export { getSessionUser, requireSessionUser };
+export type { SessionUser };
+
+export async function getFullUser(userId: string) {
+  const db = await getDb();
+  return col<UserDoc>(db, "users").findOne({ _id: toObjectId(userId) } as never);
 }
 
-export async function getSession() {
-  const supabase = await createClient();
-  const { data: { session } } = await supabase.auth.getSession();
-  return session;
-}
-
-export async function getProfile(userId: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", userId)
-    .single();
-  
-  if (error) return null;
-  return data;
-}
-
-export async function requireAuth() {
-  const user = await getUser();
-  if (!user) {
+/** Page helper: redirect anonymous visitors to /login. */
+export async function requireAuth(): Promise<SessionUser> {
+  try {
+    return await requireSessionUser();
+  } catch {
     redirect("/login");
   }
-  return user;
 }
 
+/** Page helper: require a user record (always exists when signed up properly). */
 export async function requireProfile() {
   const user = await requireAuth();
-  const profile = await getProfile(user.id);
-  if (!profile) {
-    redirect("/onboarding");
-  }
-  return profile;
+  const full = await getFullUser(user.id);
+  if (!full) redirect("/login");
+  return full;
 }
 
 export async function isAdmin(userId: string): Promise<boolean> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("user_roles")
-    .select("role:roles!inner(name)")
-    .eq("user_id", userId)
-    .eq("roles.name", "admin");
-  
-  return (data?.length ?? 0) > 0;
+  const full = await getFullUser(userId);
+  return full?.role === "admin";
 }
 
 export async function getUserRoles(userId: string): Promise<string[]> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("user_roles")
-    .select("role:roles!inner(name)")
-    .eq("user_id", userId);
-  
-  return (data as Array<{ role: { name: string } }> | null)?.map(d => d.role?.name).filter(Boolean) as string[] || [];
+  const full = await getFullUser(userId);
+  return full ? [full.role] : [];
 }

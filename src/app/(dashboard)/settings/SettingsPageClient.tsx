@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/Avatar";
-import { createClient } from "@/lib/supabase/browser";
+import { AppearanceSettings } from "./AppearanceSettings";
+import { PreferenceSettings } from "./PreferenceSettings";
 
 interface SettingsProfile {
   id: string;
@@ -31,6 +32,7 @@ export function SettingsPageClient({ profile, email }: {
   const [house, setHouse] = useState(profile?.house ?? "");
   const [interests, setInterests] = useState((profile?.interests ?? []).join(", "));
   const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url ?? "");
+  const [coverUrl, setCoverUrl] = useState((profile as unknown as Record<string, string | null> | null)?.cover_image_url ?? "");
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -41,6 +43,24 @@ export function SettingsPageClient({ profile, email }: {
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
+
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    setLogoutError(null);
+    try {
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      if (!res.ok) throw new Error("Logout failed");
+      router.refresh();
+      router.push("/login");
+    } catch {
+      setLogoutError("Could not log out. Please try again.");
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,6 +77,7 @@ export function SettingsPageClient({ profile, email }: {
           classGrade: classGrade.trim() || undefined,
           house: house.trim() || undefined,
           interests: interests.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 10),
+          coverImageUrl: coverUrl.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -114,10 +135,16 @@ export function SettingsPageClient({ profile, email }: {
     }
     setIsUpdatingPassword(true);
     try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) {
-        setPasswordError(error.message);
+      const formData = new FormData();
+      formData.append("password", newPassword);
+      formData.append("confirmPassword", confirmPassword);
+      const res = await fetch("/api/auth/update-password", { method: "POST", body: formData });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setPasswordError(
+          (data?.error as Record<string, string[]> | undefined)?._form?.[0] ||
+            "Could not update password"
+        );
         return;
       }
       setPasswordMessage("Password updated");
@@ -129,8 +156,15 @@ export function SettingsPageClient({ profile, email }: {
   };
 
   return (
-    <div className="max-w-2xl mx-auto p-4 space-y-4">
-      <h1 className="text-2xl font-bold">Settings</h1>
+    <div className="mx-auto w-full max-w-2xl space-y-4 px-3 pb-6 pt-4 sm:px-4">
+      <div>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Settings</h1>
+        <p className="text-sm text-muted-foreground">Account, appearance, notifications, privacy, and security. Every control here works.</p>
+      </div>
+
+      <AppearanceSettings />
+
+      <PreferenceSettings />
 
       <Card>
         <CardContent className="pt-4">
@@ -181,6 +215,11 @@ export function SettingsPageClient({ profile, email }: {
               <label htmlFor="interests" className="text-sm font-medium">Interests (comma-separated, max 10)</label>
               <Input id="interests" value={interests} onChange={(e) => setInterests(e.target.value)} placeholder="football, robotics, music" className="min-h-[44px]" />
             </div>
+            <div>
+              <label htmlFor="cover-url" className="text-sm font-medium">Cover image URL (optional)</label>
+              <Input id="cover-url" value={coverUrl} onChange={(e) => setCoverUrl(e.target.value)} placeholder="https://…" className="min-h-[44px]" inputMode="url" />
+              <p className="text-xs text-muted-foreground">Shown as your profile banner. Upload an image first, then paste its URL.</p>
+            </div>
             {message && <p role="status" className="text-sm text-green-600">{message}</p>}
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
             <Button type="submit" disabled={isSaving} className="min-h-[44px]">
@@ -215,12 +254,18 @@ export function SettingsPageClient({ profile, email }: {
         <CardContent className="pt-4 space-y-2">
           <h2 className="font-semibold">About Dyne</h2>
           <p className="text-sm text-muted-foreground">
-            Dyne is the private campus social network for Macro Vision Academy — your campus, your community, your network.
+            Dyne is the private campus social network for Macro Vision Academy — your campus, your community, your connection.
             Video uploads play back directly with no external transcoding.
           </p>
-          <Button variant="outline" asChild className="min-h-[44px]">
-            <a href="/api/auth/logout" onClick={(e) => e.preventDefault()}>Use the avatar menu to log out</a>
+          <Button
+            variant="outline"
+            className="min-h-[44px]"
+            disabled={isLoggingOut}
+            onClick={handleLogout}
+          >
+            {isLoggingOut ? "Logging out…" : "Log out"}
           </Button>
+          {logoutError && <p role="alert" className="text-sm text-destructive">{logoutError}</p>}
         </CardContent>
       </Card>
     </div>

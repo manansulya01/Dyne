@@ -1,86 +1,64 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type MessageDoc } from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { messageCreateSchema } from "@/lib/validation";
+import { listMessages, sendMessage } from "@/lib/db/chat";
+import { createNotification } from "@/lib/db/notifications";
+import { toMessageJSON } from "@/lib/db/contracts";
+import { parseLimitParam } from "@/lib/utils";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+interface Params {
+  params: Promise<{ id: string }>;
+}
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function authed(rawId: string) {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    if (!objectIdSchema.safeParse(rawId).success) {
+      return { db, error: NextResponse.json({ error: "Conversation not found" }, { status: 404 }) };
+    }
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
   }
+}
 
+export async function GET(request: Request, { params }: Params) {
   const { id } = await params;
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
+
   const { searchParams } = new URL(request.url);
-  const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
+  const limit = parseLimitParam(searchParams.get("limit"), 50, 100);
 
-  // Check membership
-  const { data: membership } = await supabase
-    .from("conversation_members")
-    .select("id")
-    .eq("conversation_id", id)
-    .eq("user_id", user.id)
-    .single();
-
-  if (!membership) {
+  const result = await listMessages(db, id, user.id, limit);
+  if (!result.ok) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
-  let query = supabase
-    .from("messages")
-    .select(`
-      *,
-      sender:profiles!messages_sender_id_fkey(id, username, display_name, avatar_url),
-      attachments:message_attachments(*)
-    `)
-    .eq("conversation_id", id)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (cursor) {
-    query = query.lt("created_at", cursor);
-  }
-
-  const { data: messages, error } = await query;
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  // Mark as read
-  await supabase
-    .from("conversation_members")
-    .update({ last_read_at: new Date().toISOString() })
-    .eq("conversation_id", id)
-    .eq("user_id", user.id);
-
+  const mapped = result.messages.map((m) =>
+    toMessageJSON(m as unknown as Record<string, unknown>)
+  );
   return NextResponse.json({
-    messages: messages?.reverse() || [],
-    cursor: messages?.[0]?.created_at || null,
-    hasMore: messages?.length === limit,
+    messages: mapped,
+    cursor: mapped.length ? mapped[0].created_at : null,
+    hasMore: mapped.length === limit,
   });
 }
 
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function POST(request: Request, { params }: Params) {
   const { id } = await params;
-  const body = await request.json();
-  const validated = messageCreateSchema.safeParse(body);
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
+  const body = await request.json().catch(() => null);
+  const validated = messageCreateSchema.safeParse(body);
   if (!validated.success) {
     return NextResponse.json(
       { error: validated.error.flatten().fieldErrors },
@@ -93,61 +71,41 @@ export async function POST(
     return NextResponse.json({ error: "Conversation mismatch" }, { status: 400 });
   }
 
-  // Check membership
-  const { data: membership } = await supabase
-    .from("conversation_members")
-    .select("id")
-    .eq("conversation_id", id)
-    .eq("user_id", user.id)
-    .single();
-
-  if (!membership) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const sent = await sendMessage(db, id, user.id, validated.data.content, []);
+  if (!sent.ok) {
+    if (sent.reason === "forbidden") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (sent.reason === "too_long") {
+      return NextResponse.json({ error: "Message too long" }, { status: 400 });
+    }
+    return NextResponse.json({ error: "Message cannot be empty" }, { status: 400 });
   }
 
-  const { data: message, error } = await supabase
-    .from("messages")
-    .insert({
-      conversation_id: id,
-      sender_id: user.id,
-      content: validated.data.content,
-    })
-    .select(`
-      *,
-      sender:profiles!messages_sender_id_fkey(id, username, display_name, avatar_url),
-      attachments:message_attachments(*)
-    `)
-    .single();
+  const row = await col<MessageDoc>(db, "chatMessages").findOne({ _id: sent.messageId } as never);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  // Fan out to other members (best effort; message itself already persisted).
+  // Membership was verified by sendMessage above.
+  const others = await col(db, "chatMembers")
+    .find({ conversationId: toObjectId(id) } as never)
+    .project({ userId: 1 })
+    .toArray();
+  await Promise.all(
+    others
+      .filter((m) => !m.userId.equals(toObjectId(user.id)))
+      .map((m) =>
+        createNotification(db, {
+          recipientId: m.userId,
+          actorId: user.id,
+          type: "message",
+          title: "New message",
+          message: "sent you a message",
+          data: { conversation_id: id },
+        })
+      )
+  );
 
-  // Update conversation updated_at
-  await supabase
-    .from("conversations")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", id);
-
-  // Create notifications for other members
-  const { data: members } = await supabase
-    .from("conversation_members")
-    .select("user_id")
-    .eq("conversation_id", id)
-    .neq("user_id", user.id);
-
-  if (members) {
-    const notifications = members.map(m => ({
-      recipient_id: m.user_id,
-      actor_id: user.id,
-      type: "message",
-      title: "New message",
-      message: "sent a message",
-      data: { conversation_id: id, message_id: message.id },
-    }));
-
-    await supabase.from("notifications").insert(notifications);
-  }
-
-  return NextResponse.json({ message });
+  return NextResponse.json({
+    message: row ? toMessageJSON(row as unknown as Record<string, unknown>) : { id: sent.messageId.toHexString() },
+  });
 }

@@ -1,38 +1,47 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes } from "@/lib/mongo/collections";
+import { objectIdSchema } from "@/lib/mongo/ids";
+import { reviewReport } from "@/lib/db/reports";
+import { createNotification } from "@/lib/db/notifications";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import type { ReportStatus } from "@/lib/mongo/collections";
 
 const reviewSchema = z.object({
   status: z.enum(["reviewing", "resolved", "dismissed"]),
   action: z.enum(["warning", "content_removal", "temp_ban", "perm_ban", "dismiss"]).optional(),
   reason: z.string().max(500).optional(),
+  moderatorNotes: z.string().max(2000).optional(),
+  durationDays: z.number().int().min(1).max(365).optional(),
 });
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let user;
+  try {
+    user = await requireSessionUser(db);
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
-  const { data: roles } = await supabase
-    .from("user_roles")
-    .select("role:roles!inner(name)")
-    .eq("user_id", user.id)
-    .in("roles.name", ["admin", "teacher", "staff"]);
-
-  if (!roles || roles.length === 0) {
+  if (!["admin", "teacher", "staff"].includes(user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const { id } = await params;
-  const body = await request.json();
-  const validated = reviewSchema.safeParse(body);
+  if (!objectIdSchema.safeParse(id).success) {
+    return NextResponse.json({ error: "Report not found" }, { status: 404 });
+  }
 
+  const body = await request.json().catch(() => null);
+  const validated = reviewSchema.safeParse(body);
   if (!validated.success) {
     return NextResponse.json(
       { error: validated.error.flatten().fieldErrors },
@@ -40,53 +49,26 @@ export async function PATCH(
     );
   }
 
-  const { data: report } = await supabase
-    .from("reports")
-    .select("*")
-    .eq("id", id)
-    .single();
+  const result = await reviewReport(db, id, user.id, user.role, {
+    status: validated.data.status as Exclude<ReportStatus, "pending">,
+    action: validated.data.action,
+    reason: validated.data.reason,
+    moderatorNotes: validated.data.moderatorNotes,
+    durationDays: validated.data.durationDays,
+  });
 
-  if (!report) {
-    return NextResponse.json({ error: "Report not found" }, { status: 404 });
-  }
-
-  const { error } = await supabase
-    .from("reports")
-    .update({
-      status: validated.data.status,
-      reviewed_by: user.id,
-      reviewed_at: new Date().toISOString(),
-    })
-    .eq("id", id);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  // Optional moderation action log + content removal for posts/comments.
-  if (validated.data.action && validated.data.action !== "dismiss") {
-    await supabase.from("moderation_actions").insert({
-      moderator_id: user.id,
-      target_type: report.target_type,
-      target_id: report.target_id,
-      action: validated.data.action,
-      reason: validated.data.reason ?? null,
-    });
-
-    if (validated.data.action === "content_removal") {
-      if (report.target_type === "post") {
-        await supabase.from("posts").update({ deleted_at: new Date().toISOString() }).eq("id", report.target_id);
-      } else if (report.target_type === "comment") {
-        await supabase.from("comments").update({ deleted_at: new Date().toISOString() }).eq("id", report.target_id);
-      } else if (report.target_type === "video") {
-        await supabase.from("videos").delete().eq("id", report.target_id);
-      }
+  if (!result.ok) {
+    if (result.reason === "not_found") {
+      return NextResponse.json({ error: "Report not found" }, { status: 404 });
     }
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
-    // Notify the reporter about the outcome.
-    await supabase.from("notifications").insert({
-      recipient_id: report.reporter_id,
-      actor_id: user.id,
+  // Notify the reporter about the outcome (best effort).
+  if (validated.data.action && validated.data.action !== "dismiss") {
+    await createNotification(db, {
+      recipientId: result.report.reporterId,
+      actorId: user.id,
       type: "moderation_action",
       title: "Report reviewed",
       message: `Your report was ${validated.data.status}`,

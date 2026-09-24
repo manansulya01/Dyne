@@ -1,26 +1,164 @@
 @import "tailwindcss";
 
+/*
+ * Dyne 2.0 design system.
+ * - Semantic tokens driven by [data-theme] (light/dark) + [data-accent] presets.
+ * - Density + font-scale + motion preferences via data attributes.
+ * - Original Dyne aesthetic: crisp, calm, campus-premium. No neon excess.
+ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.05), 0 4px 16px -8px rgb(0 0 0 / 0.12);
+  --shadow-pop: 0 8px 32px -8px rgb(0 0 0 / 0.22);
+
+  --space-density: 1;
+  --dyne-font-scale: 1;
 }
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #f7f8fa;
+  --foreground: #13161c;
+  --card: #ffffff;
+  --card-foreground: #13161c;
+  --popover: #ffffff;
+  --popover-foreground: #13161c;
+  --muted: #eef1f5;
+  --muted-foreground: #5b6472;
+  --border: #e3e8ef;
+  --input: #d9e0ea;
+  --ring: var(--accent);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+:root[data-theme="dark"],
+:root.dark,
+.dark {
+  color-scheme: dark;
+  --background: #0c0f14;
+  --foreground: #eef1f6;
+  --card: #141922;
+  --card-foreground: #eef1f6;
+  --popover: #171d28;
+  --popover-foreground: #eef1f6;
+  --muted: #1c2330;
+  --muted-foreground: #9aa5b5;
+  --border: #232c3b;
+  --input: #2a3446;
+  --ring: var(--accent);
+  --accent-soft: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+/* Accent presets — tasteful, accessible, campus-appropriate. */
+:root[data-accent="dyne-blue"] { --accent: #0f7ff2; --accent-foreground: #ffffff; --primary: #0f7ff2; --primary-foreground: #ffffff; }
+:root[data-accent="midnight"] { --accent: #4f46e5; --accent-foreground: #ffffff; --primary: #4f46e5; --primary-foreground: #ffffff; }
+:root[data-accent="aurora"] { --accent: #0d9488; --accent-foreground: #ffffff; --primary: #0d9488; --primary-foreground: #ffffff; }
+:root[data-accent="campus"] { --accent: #15803d; --accent-foreground: #ffffff; --primary: #15803d; --primary-foreground: #ffffff; }
+:root[data-accent="slate"] { --accent: #475569; --accent-foreground: #ffffff; --primary: #475569; --primary-foreground: #ffffff; }
+:root[data-accent="ocean"] { --accent: #0284c7; --accent-foreground: #ffffff; --primary: #0284c7; --primary-foreground: #ffffff; }
+:root[data-theme="dark"][data-accent="dyne-blue"] { --accent: #38a3ff; --primary: #38a3ff; --primary-foreground: #08111f; --accent-foreground: #08111f; }
+:root[data-theme="dark"][data-accent="midnight"] { --accent: #818cf8; --primary: #818cf8; --primary-foreground: #0d0d24; --accent-foreground: #0d0d24; }
+:root[data-theme="dark"][data-accent="aurora"] { --accent: #2dd4bf; --primary: #2dd4bf; --primary-foreground: #04211d; --accent-foreground: #04211d; }
+:root[data-theme="dark"][data-accent="campus"] { --accent: #4ade80; --primary: #4ade80; --primary-foreground: #05240f; --accent-foreground: #05240f; }
+:root[data-theme="dark"][data-accent="slate"] { --accent: #94a3b8; --primary: #94a3b8; --primary-foreground: #0b1220; --accent-foreground: #0b1220; }
+:root[data-theme="dark"][data-accent="ocean"] { --accent: #38bdf8; --primary: #38bdf8; --primary-foreground: #06222f; --accent-foreground: #06222f; }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--muted);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #ffffff;
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* Density + font scaling */
+:root[data-density="compact"] { --space-density: 0.82; }
+:root[data-density="comfortable"] { --space-density: 1; }
+:root[data-font-scale="small"] { --dyne-font-scale: 0.94; }
+:root[data-font-scale="medium"] { --dyne-font-scale: 1; }
+:root[data-font-scale="large"] { --dyne-font-scale: 1.08; }
+:root[data-font-scale="xl"] { --dyne-font-scale: 1.16; }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  font-size: calc(1rem * var(--dyne-font-scale));
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+section[id] { scroll-margin-top: 4.5rem; }
+
+a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Refined surfaces */
+.dyne-card {
+  background: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+.dyne-card-hover { transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease; }
+.dyne-card-hover:hover { transform: translateY(-1px); box-shadow: var(--shadow-pop); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+
+.dyne-press { transition: transform 120ms ease, background-color 120ms ease; }
+.dyne-press:active { transform: scale(0.98); }
+
+.dyne-fade-in { animation: dyne-fade 220ms ease both; }
+@keyframes dyne-fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.dyne-skeleton { position: relative; overflow: hidden; background: var(--muted); border-radius: 8px; }
+.dyne-skeleton::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.35), transparent);
+  animation: dyne-shimmer 1.4s infinite;
+}
+:root[data-theme="dark"] .dyne-skeleton::after { background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.09), transparent); }
+@keyframes dyne-shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+.dyne-scroll { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.dyne-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.dyne-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+
+.dyne-line-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dyne-line-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Motion preferences */
+:root[data-motion="reduced"] *, :root[data-motion="reduced"] *::before, :root[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important; transition-duration: 0.01ms !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }

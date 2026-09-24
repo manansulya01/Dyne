@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import { ChatPageClient } from "./ChatPageClient";
-import { createClient } from "@/lib/supabase/server";
+import { getDb } from "@/lib/mongo/client";
+import { getSessionUser } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
   title: "Chat - Dyne",
@@ -8,18 +9,7 @@ export const metadata: Metadata = {
 };
 
 export default async function ChatPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return <ChatPageClient currentUserId={null} />;
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("id", user.id)
-    .single();
-
-  return <ChatPageClient currentUserId={profile?.id || null} />;
+  const db = await getDb();
+  const user = await getSessionUser(db);
+  return <ChatPageClient currentUserId={user?.id || null} />;
 }

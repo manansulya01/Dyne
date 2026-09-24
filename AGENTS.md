@@ -12,7 +12,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Project Overview
 
-Dyne is a private campus social network for Macro Vision Academy. Core concept: **"Your Campus. Your Community. Your Network."**
+Dyne is a private campus social network for Macro Vision Academy. Core concept: **"Your Campus, Your Community, Your Connection."**
 
 Stack:
 - Next.js 16 (App Router)

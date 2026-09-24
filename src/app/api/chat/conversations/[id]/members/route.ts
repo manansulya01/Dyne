@@ -1,144 +1,132 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { z } from "zod";
+import { getDb } from "@/lib/mongo/client";
+import {
+  ensureIndexes,
+  col,
+  type ConversationDoc,
+  type ConversationMemberDoc,
+} from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
+import { addGroupMembers, isConversationMember } from "@/lib/db/chat";
+import { resolveAuthors } from "@/lib/db/authors";
+import { createNotification } from "@/lib/db/notifications";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+interface Params {
+  params: Promise<{ id: string }>;
+}
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function authed(rawId: string) {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    if (!objectIdSchema.safeParse(rawId).success) {
+      return { db, error: NextResponse.json({ error: "Conversation not found" }, { status: 404 }) };
+    }
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
   }
+}
 
+export async function GET(_request: Request, { params }: Params) {
   const { id } = await params;
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  // Check membership
-  const { data: membership } = await supabase
-    .from("conversation_members")
-    .select("id")
-    .eq("conversation_id", id)
-    .eq("user_id", user.id)
-    .single();
-
-  if (!membership) {
+  if (!(await isConversationMember(db, id, user.id))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { data: members, error } = await supabase
-    .from("conversation_members")
-    .select(`
-      *,
-      user:profiles!conversation_members_user_id_fkey(id, username, display_name, avatar_url)
-    `)
-    .eq("conversation_id", id)
-    .order("joined_at", { ascending: true });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const rows = await col<ConversationMemberDoc>(db, "chatMembers")
+    .find({ conversationId: toObjectId(id) } as never)
+    .sort({ joinedAt: 1 })
+    .toArray();
+  const authors = await resolveAuthors(db, rows.map((r) => r.userId));
 
   return NextResponse.json({
-    members: members?.map(m => ({
-      ...m.user,
-      role: m.role,
-      joined_at: m.joined_at,
-    })) || [],
+    // Deleted/unknown users resolve to null — emit an explicit shape with the
+    // member's userId instead of spreading null (which would drop the id).
+    members: rows.map((r) => {
+      const author = authors.get(r.userId.toHexString());
+      return {
+        ...(author ?? {
+          id: r.userId.toHexString(),
+          username: "Deleted user",
+          displayName: "Deleted user",
+          avatarUrl: null,
+        }),
+        role: r.role,
+        joined_at: r.joinedAt,
+      };
+    }),
   });
 }
 
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+const addSchema = z.object({ userIds: z.array(objectIdSchema).min(1, "User IDs required") });
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function POST(request: Request, { params }: Params) {
   const { id } = await params;
-  const body = await request.json();
-  const { userIds } = body;
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+  const body = await request.json().catch(() => null);
+  const validated = addSchema.safeParse(body);
+  if (!validated.success) {
     return NextResponse.json({ error: "User IDs required" }, { status: 400 });
   }
 
-  // Check if user is a member
-  const { data: membership } = await supabase
-    .from("conversation_members")
-    .select("id")
-    .eq("conversation_id", id)
-    .eq("user_id", user.id)
-    .single();
-
-  if (!membership) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const conversation = await col<ConversationDoc>(db, "chatConversations").findOne({
+    _id: toObjectId(id),
+  } as never);
+  if (!conversation) {
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  }
+  if (conversation.type !== "group") {
+    return NextResponse.json(
+      { error: "Can only add members to group conversations" },
+      { status: 400 }
+    );
   }
 
-  const { data: conversation } = await supabase
-    .from("conversations")
-    .select("type")
-    .eq("id", id)
-    .single();
-
-  if (!conversation || conversation.type !== "group") {
-    return NextResponse.json({ error: "Can only add members to group conversations" }, { status: 400 });
-  }
-
-  const memberInserts = userIds.map(userId => ({
-    conversation_id: id,
-    user_id: userId,
-    role: "member",
-  }));
-
-  const { error } = await supabase
-    .from("conversation_members")
-    .insert(memberInserts);
-
-  if (error) {
-    if (error.code === "23505") {
-      return NextResponse.json({ error: "Some users are already members" }, { status: 400 });
+  const added = await addGroupMembers(db, id, user.id, validated.data.userIds);
+  if (!added.ok) {
+    if (added.reason === "forbidden") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    if (added.reason === "unknown_user") {
+      return NextResponse.json({ error: "One or more users not found" }, { status: 404 });
+    }
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
   }
 
-  // Notify new members
-  for (const userId of userIds) {
-    if (userId !== user.id) {
-      await supabase
-        .from("notifications")
-        .insert({
-          recipient_id: userId,
-          actor_id: user.id,
-          type: "message",
-          title: "Added to group",
-          message: "added you to a group conversation",
-          data: { conversation_id: id },
-        });
+  for (const targetId of validated.data.userIds) {
+    if (targetId !== user.id) {
+      await createNotification(db, {
+        recipientId: targetId,
+        actorId: user.id,
+        type: "message",
+        title: "Added to group",
+        message: "added you to a group conversation",
+        data: { conversation_id: id },
+      });
     }
   }
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, added: added.added });
 }
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function DELETE(request: Request, { params }: Params) {
   const { id } = await params;
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  // Target member comes from query string (this route has no [memberId] segment).
   const { searchParams } = new URL(request.url);
   let memberId = searchParams.get("userId");
   if (!memberId) {
@@ -149,46 +137,35 @@ export async function DELETE(
       // no body
     }
   }
-
-  if (!memberId) {
+  if (!memberId || !objectIdSchema.safeParse(memberId).success) {
     return NextResponse.json({ error: "User ID required" }, { status: 400 });
   }
 
-  // Check permissions
-  const { data: membership } = await supabase
-    .from("conversation_members")
-    .select("role")
-    .eq("conversation_id", id)
-    .eq("user_id", user.id)
-    .single();
+  const cid = toObjectId(id);
+  const mine = await col<ConversationMemberDoc>(db, "chatMembers").findOne({
+    conversationId: cid,
+    userId: toObjectId(user.id),
+  } as never);
+  const conversation = await col<ConversationDoc>(db, "chatConversations").findOne({
+    _id: cid,
+  } as never);
+  if (!conversation) {
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  }
 
-  const { data: conversation } = await supabase
-    .from("conversations")
-    .select("created_by")
-    .eq("id", id)
-    .single();
-
-  const isCreator = conversation?.created_by === user.id;
-  const isAdmin = membership?.role === "admin";
+  const isCreator = conversation.createdBy.equals(toObjectId(user.id));
+  const isAdmin = mine?.role === "admin";
   const isSelf = memberId === user.id;
-
   if (!isSelf && !isCreator && !isAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
-  if (memberId === conversation?.created_by && !isCreator) {
+  if (memberId === conversation.createdBy.toHexString() && !isCreator) {
     return NextResponse.json({ error: "Cannot remove creator" }, { status: 403 });
   }
 
-  const { error } = await supabase
-    .from("conversation_members")
-    .delete()
-    .eq("conversation_id", id)
-    .eq("user_id", memberId);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
+  await col<ConversationMemberDoc>(db, "chatMembers").deleteOne({
+    conversationId: cid,
+    userId: toObjectId(memberId),
+  } as never);
   return NextResponse.json({ success: true });
 }

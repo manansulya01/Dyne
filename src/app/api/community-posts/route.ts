@@ -1,20 +1,29 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type CommunityDoc } from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { postCreateSchema } from "@/lib/validation";
+import { createCommunityPost, listCommunityPosts, memberRole } from "@/lib/db/communities";
+import { toCommunityPostJSON } from "@/lib/db/contracts";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let user;
+  try {
+    user = await requireSessionUser(db);
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
   const formData = await request.formData();
   const content = formData.get("content") as string;
   const communityId = formData.get("communityId") as string;
 
-  if (!communityId) {
+  if (!communityId || !objectIdSchema.safeParse(communityId).success) {
     return NextResponse.json({ error: "Community ID required" }, { status: 400 });
   }
 
@@ -26,43 +35,42 @@ export async function POST(request: Request) {
     );
   }
 
-  // Check membership
-  const { data: membership } = await supabase
-    .from("community_members")
-    .select("role")
-    .eq("community_id", communityId)
-    .eq("user_id", user.id)
-    .single();
-
+  const membership = await memberRole(db, communityId, user.id);
   if (!membership) {
-    const { data: community } = await supabase
-      .from("communities")
-      .select("is_private")
-      .eq("id", communityId)
-      .single();
-
-    if (community?.is_private) {
+    const community = await col<CommunityDoc>(db, "communities").findOne({
+      _id: toObjectId(communityId),
+    } as never);
+    if (!community) {
+      return NextResponse.json({ error: "Community not found" }, { status: 404 });
+    }
+    if (community.isPrivate) {
       return NextResponse.json({ error: "This community is private" }, { status: 403 });
     }
   }
 
-  // Create post (community posts are text-only; post_media belongs to feed posts).
-  const { data: post, error: postError } = await supabase
-    .from("community_posts")
-    .insert({
-      community_id: communityId,
-      author_id: user.id,
-      content: validated.data.content,
-    })
-    .select(`
-      *,
-      author:profiles!community_posts_author_id_fkey(id, username, display_name, avatar_url)
-    `)
-    .single();
-
-  if (postError) {
-    return NextResponse.json({ error: postError.message }, { status: 500 });
+  const created = await createCommunityPost(
+    db,
+    communityId,
+    user.id,
+    validated.data.content ?? ""
+  );
+  if (!created.ok) {
+    if (created.reason === "forbidden") {
+      return NextResponse.json({ error: "This community is private" }, { status: 403 });
+    }
+    return NextResponse.json(
+      { error: { content: ["Post must include text"] } },
+      { status: 400 }
+    );
   }
 
-  return NextResponse.json({ post: { ...post, media: [] } });
+  const rows = await listCommunityPosts(db, communityId, 50);
+  const full = rows.find(
+    (p) => String((p as unknown as Record<string, unknown>).id) === created.postId.toHexString()
+  );
+  return NextResponse.json({
+    post: full
+      ? toCommunityPostJSON(full as unknown as Record<string, unknown>)
+      : { id: created.postId.toHexString() },
+  });
 }

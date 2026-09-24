@@ -1,44 +1,41 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col } from "@/lib/mongo/collections";
+import { requireSessionUser, toHttpError, type SessionUser } from "@/lib/auth/session";
+import type { Db } from "mongodb";
 
-export async function requireAdmin(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
-  const { data } = await supabase
-    .from("user_roles")
-    .select("role:roles!inner(name)")
-    .eq("user_id", userId)
-    .eq("roles.name", "admin");
-  return (data?.length ?? 0) > 0;
+/** Admin gate shared by admin routes. Never trust client-supplied roles. */
+export async function requireAdminUser(db: Db): Promise<SessionUser> {
+  const user = await requireSessionUser(db);
+  if (user.role !== "admin") {
+    const err = new Error("Forbidden") as Error & { status?: number };
+    err.status = 403;
+    throw err;
+  }
+  return user;
 }
 
 export async function GET() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    await requireAdminUser(db);
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
-  if (!(await requireAdmin(supabase, user.id))) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const [users, posts, reports, events, communities, videos] = await Promise.all([
-    supabase.from("profiles").select("*", { count: "exact", head: true }),
-    supabase.from("posts").select("*", { count: "exact", head: true }).is("deleted_at", null),
-    supabase.from("reports").select("*", { count: "exact", head: true }).eq("status", "pending"),
-    supabase.from("events").select("*", { count: "exact", head: true }),
-    supabase.from("communities").select("*", { count: "exact", head: true }),
-    supabase.from("videos").select("*", { count: "exact", head: true }),
+  const [users, posts, pendingReports, events, communities, videos] = await Promise.all([
+    col(db, "users").countDocuments({}),
+    col(db, "posts").countDocuments({ deletedAt: null } as never),
+    col(db, "reports").countDocuments({ status: "pending" } as never),
+    col(db, "events").countDocuments({}),
+    col(db, "communities").countDocuments({}),
+    col(db, "videos").countDocuments({}),
   ]);
 
   return NextResponse.json({
-    stats: {
-      users: users.count ?? 0,
-      posts: posts.count ?? 0,
-      pendingReports: reports.count ?? 0,
-      events: events.count ?? 0,
-      communities: communities.count ?? 0,
-      videos: videos.count ?? 0,
-    },
+    stats: { users, posts, pendingReports, events, communities, videos },
   });
 }

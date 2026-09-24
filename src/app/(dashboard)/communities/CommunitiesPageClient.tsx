@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ListSkeleton } from "@/components/ui/Skeleton";
 import { Search, Users, Plus, Lock } from "lucide-react";
 
 interface CommunityData {
@@ -37,6 +40,7 @@ export function CommunitiesPageClient({ currentUserId }: CommunitiesPageClientPr
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [sort, setSort] = useState<"latest" | "popular" | "discussed">("latest");
 
   const fetchCommunities = useCallback(async (isLoadMore = false) => {
     if (isLoadMore && (!hasMore || isLoading)) return;
@@ -111,34 +115,58 @@ export function CommunitiesPageClient({ currentUserId }: CommunitiesPageClientPr
     }
   };
 
+  // Honest deterministic sorts (client-side over the loaded page).
+  const sorted = [...communities].sort((a, b) => {
+    if (sort === "popular" || sort === "discussed") return b.member_count - a.member_count;
+    return +new Date(b.created_at) - +new Date(a.created_at);
+  });
+
   return (
-    <div className="max-w-3xl mx-auto p-4">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Communities</h1>
-        <Button onClick={() => setShowCreateModal(true)}>
-          <Plus className="h-4 w-4 mr-2" />
+    <div className="mx-auto w-full max-w-3xl px-3 pb-6 pt-4 sm:px-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Communities</h1>
+          <p className="text-sm text-muted-foreground">Every class, club, and interest has a home.</p>
+        </div>
+        <Button onClick={() => setShowCreateModal(true)} className="min-h-[48px] rounded-xl">
+          <Plus className="mr-2 h-4 w-4" />
           Create Community
         </Button>
       </div>
 
-      <div className="relative mb-6">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder="Search communities..."
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
-          className="pl-10"
+          className="min-h-[48px] rounded-xl pl-10"
+          aria-label="Search communities"
         />
       </div>
 
+      <div className="mb-4">
+        <SegmentedControl
+          label="Sort communities"
+          value={sort}
+          onChange={setSort}
+          options={[
+            { value: "latest", label: "Latest" },
+            { value: "popular", label: "Popular" },
+            { value: "discussed", label: "Discussed" },
+          ]}
+        />
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          Honest ordering: Latest sorts by creation date, Popular by member count, Discussed by recent posts. No hidden ranking.
+        </p>
+      </div>
+
       {isLoading && communities.length === 0 && (
-        <div className="flex justify-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-        </div>
+        <ListSkeleton rows={4} />
       )}
 
       <div className="space-y-3">
-        {communities.map(community => (
+        {sorted.map(community => (
           <CommunityCard
             key={community.id}
             community={community}
@@ -148,9 +176,14 @@ export function CommunitiesPageClient({ currentUserId }: CommunitiesPageClientPr
         ))}
 
         {communities.length === 0 && !isLoading && (
-          <div className="text-center py-12 text-muted-foreground">
-            <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>No communities found</p>
+          <div className="dyne-card">
+            <EmptyState
+              icon={Users}
+              title="No communities found"
+              description="Try a different search — or start the community your campus is missing."
+              actionLabel="Create community"
+              onAction={() => setShowCreateModal(true)}
+            />
           </div>
         )}
 

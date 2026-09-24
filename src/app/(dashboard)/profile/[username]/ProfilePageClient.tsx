@@ -23,6 +23,8 @@ interface ProfileData {
   username: string;
   display_name: string | null;
   avatar_url: string | null;
+  cover_image_url: string | null;
+  accent: string | null;
   bio: string | null;
   role: string;
   class_grade: string | null;
@@ -152,10 +154,16 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
   const isOwnProfile = profile.is_own;
 
   return (
-    <div className="max-w-2xl mx-auto p-4">
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex flex-col md:flex-row gap-6">
+    <div className="mx-auto w-full max-w-2xl px-3 pb-6 pt-4 sm:px-4">
+      <Card className="dyne-card overflow-hidden">
+        <div
+          className="h-32 w-full bg-gradient-to-r from-primary/30 via-primary/15 to-transparent sm:h-40"
+          role="img"
+          aria-label={profile.cover_image_url ? `${profile.display_name || profile.username}'s cover` : "Profile cover"}
+          style={profile.cover_image_url ? { backgroundImage: `url(${profile.cover_image_url})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
+        />
+        <CardContent className="pt-0">
+          <div className="-mt-10 flex flex-col gap-4 md:flex-row md:items-end">
             <Avatar className="h-24 w-24 md:h-28 md:w-28 shrink-0 mx-auto md:mx-0">
               <AvatarImage src={profile.avatar_url || ""} alt="" />
               <AvatarFallback name={profile.display_name || profile.username} />

@@ -1,77 +1,93 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { ObjectId } from "mongodb";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type UserDoc } from "@/lib/mongo/collections";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { parseLimitParam } from "@/lib/utils";
+
+const VALID_ROLES = ["student", "teacher", "staff", "club", "admin"];
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 100);
+}
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let user;
+  try {
+    user = await requireSessionUser(db);
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
   const { searchParams } = new URL(request.url);
-  const search = searchParams.get("search");
-  const role = searchParams.get("role");
+  const search = searchParams.get("search")?.trim() || "";
+  const role = searchParams.get("role") || "";
   const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
-  let query = supabase
-    .from("profiles")
-    .select(`
-      *,
-      followers:follows!follows_following_id_fkey(count),
-      following:follows!follows_follower_id_fkey(count)
-    `)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (cursor) {
-    query = query.lt("created_at", cursor);
-  }
-
+  const filter: Record<string, unknown> = {};
   if (search) {
-    const safe = search.replace(/[%_\\]/g, (m) => `\\${m}`).slice(0, 100);
-    query = query.or(`username.ilike.%${safe}%,display_name.ilike.%${safe}%`);
+    const rx = { $regex: escapeRegExp(search), $options: "i" };
+    filter.$or = [{ username: rx }, { displayName: rx }];
+  }
+  if (role && VALID_ROLES.includes(role)) filter.role = role;
+  if (cursor) {
+    const parsed = new Date(cursor);
+    if (!isNaN(+parsed)) filter.createdAt = { $lt: parsed };
   }
 
-  if (role && ["student", "teacher", "staff", "club", "admin"].includes(role)) {
-    query = query.eq("role", role);
-  }
+  const rows = await col<UserDoc>(db, "users")
+    .find(filter as never)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
 
-  const { data: profiles, error } = await query;
+  const ids = rows.map((r) => r._id);
+  const [followerCounts, followingCounts, myFollows] = await Promise.all([
+    col(db, "follows")
+      .aggregate([
+        { $match: { followingId: { $in: ids } } },
+        { $group: { _id: "$followingId", n: { $sum: 1 } } },
+      ])
+      .toArray(),
+    col(db, "follows")
+      .aggregate([
+        { $match: { followerId: { $in: ids } } },
+        { $group: { _id: "$followerId", n: { $sum: 1 } } },
+      ])
+      .toArray(),
+    col(db, "follows")
+      .find({ followerId: new ObjectId(user.id), followingId: { $in: ids } } as never)
+      .project({ followingId: 1 })
+      .toArray(),
+  ]);
+  const followersMap = new Map(followerCounts.map((r) => [String(r._id), r.n as number]));
+  const followingMap = new Map(followingCounts.map((r) => [String(r._id), r.n as number]));
+  const followingSet = new Set(myFollows.map((r) => String(r.followingId)));
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  const currentUserId = user.id;
-
-  const transformedProfiles = profiles?.map(profile => ({
-    ...profile,
-    followers_count: profile.followers?.[0]?.count || 0,
-    following_count: profile.following?.[0]?.count || 0,
-    is_following: false,
-  })) || [];
-
-  // Check follow status for each profile in batch
-  if (transformedProfiles.length > 0) {
-    const profileIds = transformedProfiles.map(p => p.id);
-    const { data: follows } = await supabase
-      .from("follows")
-      .select("following_id")
-      .eq("follower_id", currentUserId)
-      .in("following_id", profileIds);
-
-    const followingSet = new Set(follows?.map(f => f.following_id) || []);
-    
-    transformedProfiles.forEach(p => {
-      p.is_following = followingSet.has(p.id);
-    });
-  }
+  const profiles = rows.map((p) => ({
+    id: p._id.toHexString(),
+    username: p.username,
+    display_name: p.displayName,
+    avatar_url: p.avatarUrl,
+    bio: p.bio,
+    role: p.role,
+    class_grade: p.classGrade,
+    house: p.house,
+    interests: p.interests,
+    created_at: p.createdAt,
+    followers_count: followersMap.get(p._id.toHexString()) ?? 0,
+    following_count: followingMap.get(p._id.toHexString()) ?? 0,
+    is_following: followingSet.has(p._id.toHexString()),
+  }));
 
   return NextResponse.json({
-    profiles: transformedProfiles,
-    cursor: transformedProfiles[transformedProfiles.length - 1]?.created_at || null,
-    hasMore: transformedProfiles.length === limit,
+    profiles,
+    cursor: rows.length ? rows[rows.length - 1].createdAt : null,
+    hasMore: rows.length === limit,
   });
 }

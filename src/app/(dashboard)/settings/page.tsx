@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
-import { createClient } from "@/lib/supabase/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes } from "@/lib/mongo/collections";
+import { getSessionUser } from "@/lib/auth/session";
+import { findUserById } from "@/lib/db/users";
+import { toProfileJSON } from "@/lib/db/contracts";
 import { SettingsPageClient } from "./SettingsPageClient";
 
 export const metadata: Metadata = {
@@ -8,12 +12,12 @@ export const metadata: Metadata = {
 };
 
 export default async function SettingsPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
+  const user = await getSessionUser(db);
 
-  const { data: profile } = user
-    ? await supabase.from("profiles").select("*").eq("id", user.id).single()
-    : { data: null };
+  const full = user ? await findUserById(db, user.id) : null;
+  const profile = full ? toProfileJSON(full as unknown as Record<string, unknown>) : null;
 
   return (
     <SettingsPageClient

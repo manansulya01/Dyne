@@ -1,4 +1,4 @@
-# Dyne — Your Campus. Your Community. Your Network.
+# Dyne — Your Campus, Your Community, Your Connection.
 
 Dyne is a private campus social network for Macro Vision Academy built with
 Next.js 16, React 19, TypeScript, Tailwind CSS 4, Supabase (PostgreSQL, Auth,

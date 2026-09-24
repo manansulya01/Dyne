@@ -1,74 +1,60 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type CommunityDoc } from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
+import { listCommunityPosts, memberRole } from "@/lib/db/communities";
+import { toCommunityPostJSON } from "@/lib/db/contracts";
+import { parseLimitParam } from "@/lib/utils";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let user;
+  try {
+    user = await requireSessionUser(db);
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
   const { id } = await params;
+  if (!objectIdSchema.safeParse(id).success) {
+    return NextResponse.json({ error: "Community not found" }, { status: 404 });
+  }
+
   const { searchParams } = new URL(request.url);
   const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
-  // Check membership
-  const { data: membership } = await supabase
-    .from("community_members")
-    .select("role")
-    .eq("community_id", id)
-    .eq("user_id", user.id)
-    .single();
-
-  if (!membership) {
-    const { data: community } = await supabase
-      .from("communities")
-      .select("is_private")
-      .eq("id", id)
-      .single();
-
-    if (community?.is_private) {
+  const membership = await memberRole(db, id, user.id);
+  if (!membership && user.role !== "admin") {
+    const community = await col<CommunityDoc>(db, "communities").findOne({
+      _id: toObjectId(id),
+    } as never);
+    if (!community) {
+      return NextResponse.json({ error: "Community not found" }, { status: 404 });
+    }
+    if (community.isPrivate && !community.ownerId.equals(toObjectId(user.id))) {
       return NextResponse.json({ error: "This community is private" }, { status: 403 });
     }
   }
 
-  // Note: community posts are text discussions — reactions/comments tables
-  // reference feed posts only, so counts are structurally zero here.
-  let query = supabase
-    .from("community_posts")
-    .select(`
-      *,
-      author:profiles!community_posts_author_id_fkey(id, username, display_name, avatar_url)
-    `)
-    .eq("community_id", id)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
+  let before: Date | undefined;
   if (cursor) {
-    query = query.lt("created_at", cursor);
+    const parsed = new Date(cursor);
+    if (!isNaN(+parsed)) before = parsed;
   }
-
-  const { data: posts, error } = await query;
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  const transformedPosts = posts?.map(post => ({
-    ...post,
-    reaction_count: 0,
-    comment_count: 0,
-  })) || [];
+  const posts = await listCommunityPosts(db, id, limit, before);
+  const mapped = posts.map((p) => toCommunityPostJSON(p as unknown as Record<string, unknown>));
 
   return NextResponse.json({
-    posts: transformedPosts,
-    cursor: transformedPosts[transformedPosts.length - 1]?.created_at || null,
-    hasMore: transformedPosts.length === limit,
+    posts: mapped,
+    cursor: mapped.length ? mapped[mapped.length - 1].created_at : null,
+    hasMore: mapped.length === limit,
   });
 }

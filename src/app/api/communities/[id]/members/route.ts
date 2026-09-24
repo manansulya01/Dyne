@@ -1,183 +1,153 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type CommunityDoc } from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
+import {
+  joinCommunity,
+  leaveCommunity,
+  memberRole,
+} from "@/lib/db/communities";
+import { resolveAuthors } from "@/lib/db/authors";
+import { createNotification } from "@/lib/db/notifications";
+import { toMemberJSON } from "@/lib/db/contracts";
+import { parseLimitParam } from "@/lib/utils";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { id } = await params;
-  const { searchParams } = new URL(request.url);
-  const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
-
-  // Check if user is a member
-  const { data: membership } = await supabase
-    .from("community_members")
-    .select("role")
-    .eq("community_id", id)
-    .eq("user_id", user.id)
-    .single();
-
-  if (!membership) {
-    const { data: community } = await supabase
-      .from("communities")
-      .select("is_private")
-      .eq("id", id)
-      .single();
-    
-    if (community?.is_private) {
-      return NextResponse.json({ error: "This community is private" }, { status: 403 });
-    }
-  }
-
-  let query = supabase
-    .from("community_members")
-    .select(`
-      *,
-      user:profiles!community_members_user_id_fkey(id, username, display_name, avatar_url)
-    `)
-    .eq("community_id", id)
-    .order("joined_at", { ascending: false })
-    .limit(limit);
-
-  if (cursor) {
-    query = query.lt("joined_at", cursor);
-  }
-
-  const { data: members, error } = await query;
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json({
-    members: members?.map(m => ({
-      ...m.user,
-      role: m.role,
-      joined_at: m.joined_at,
-    })) || [],
-    cursor: members?.[members.length - 1]?.joined_at || null,
-    hasMore: members?.length === limit,
-  });
+interface Params {
+  params: Promise<{ id: string }>;
 }
 
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function authed(rawId: string) {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    if (!objectIdSchema.safeParse(rawId).success) {
+      return { db, error: NextResponse.json({ error: "Community not found" }, { status: 404 }) };
+    }
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
   }
+}
 
+export async function GET(request: Request, { params }: Params) {
   const { id } = await params;
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  const { data: community } = await supabase
-    .from("communities")
-    .select("is_private, owner_id")
-    .eq("id", id)
-    .single();
+  const { searchParams } = new URL(request.url);
+  const cursor = searchParams.get("cursor");
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
+  const community = await col<CommunityDoc>(db, "communities").findOne({
+    _id: toObjectId(id),
+  } as never);
   if (!community) {
     return NextResponse.json({ error: "Community not found" }, { status: 404 });
   }
 
-  if (community.is_private && community.owner_id !== user.id) {
+  const role = await memberRole(db, id, user.id);
+  const isOwner = community.ownerId.equals(toObjectId(user.id));
+  if (!role && !isOwner && user.role !== "admin" && community.isPrivate) {
     return NextResponse.json({ error: "This community is private" }, { status: 403 });
   }
 
-  const { error } = await supabase
-    .from("community_members")
-    .insert({
-      community_id: id,
-      user_id: user.id,
-      role: "member",
-    });
+  const filter: Record<string, unknown> = { communityId: toObjectId(id) };
+  if (cursor) {
+    const parsed = new Date(cursor);
+    if (!isNaN(+parsed)) filter.joinedAt = { $lt: parsed };
+  }
+  const rows = await col(db, "communityMembers")
+    .find(filter as never)
+    .sort({ joinedAt: -1 })
+    .limit(limit)
+    .toArray();
+  const authors = await resolveAuthors(
+    db,
+    rows.map((r) => r.userId)
+  );
+  const members = rows.map((r) =>
+    toMemberJSON({
+      user: authors.get(r.userId.toHexString()) ?? null,
+      role: r.role,
+      joinedAt: r.joinedAt,
+    } as unknown as Record<string, unknown>)
+  );
 
-  if (error) {
-    if (error.code === "23505") {
-      return NextResponse.json({ error: "Already a member" }, { status: 400 });
-    }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({
+    members,
+    cursor: rows.length ? rows[rows.length - 1].joinedAt : null,
+    hasMore: rows.length === limit,
+  });
+}
+
+export async function POST(request: Request, { params }: Params) {
+  const { id } = await params;
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
+
+  const community = await col<CommunityDoc>(db, "communities").findOne({
+    _id: toObjectId(id),
+  } as never);
+  if (!community) {
+    return NextResponse.json({ error: "Community not found" }, { status: 404 });
+  }
+  if (community.isPrivate && !community.ownerId.equals(toObjectId(user.id))) {
+    return NextResponse.json({ error: "This community is private" }, { status: 403 });
   }
 
-  // Create notification for community owner
-  if (community.owner_id !== user.id) {
-    await supabase
-      .from("notifications")
-      .insert({
-        recipient_id: community.owner_id,
-        actor_id: user.id,
-        type: "community_join",
-        title: "New member",
-        message: "joined your community",
-        data: { community_id: id },
-      });
+  const joined = await joinCommunity(db, id, user.id);
+  if (!joined.ok) {
+    if (joined.reason === "private") {
+      return NextResponse.json({ error: "This community is private" }, { status: 403 });
+    }
+    return NextResponse.json({ error: "Community not found" }, { status: 404 });
+  }
+  if ("already" in joined) {
+    return NextResponse.json({ error: "Already a member" }, { status: 400 });
+  }
+
+  if (!community.ownerId.equals(toObjectId(user.id))) {
+    await createNotification(db, {
+      recipientId: community.ownerId,
+      actorId: user.id,
+      type: "community_join",
+      title: "New member",
+      message: "joined your community",
+      data: { community_id: id },
+    });
   }
 
   return NextResponse.json({ success: true });
 }
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function DELETE(request: Request, { params }: Params) {
   const { id } = await params;
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
+
   const { searchParams } = new URL(request.url);
-  // Default to self (leave) when no explicit target is given.
-  const targetUserId = searchParams.get("userId") || user.id;
-
-  // Check permissions
-  const { data: membership } = await supabase
-    .from("community_members")
-    .select("role")
-    .eq("community_id", id)
-    .eq("user_id", user.id)
-    .single();
-
-  const { data: community } = await supabase
-    .from("communities")
-    .select("owner_id")
-    .eq("id", id)
-    .single();
-
-  const isOwner = community?.owner_id === user.id;
-  const isModerator = membership?.role === "moderator";
-  const isSelf = targetUserId === user.id;
-
-  if (!isSelf && !isOwner && !isModerator) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const rawTarget = searchParams.get("userId") || user.id;
+  if (!objectIdSchema.safeParse(rawTarget).success) {
+    return NextResponse.json({ error: "User ID required" }, { status: 400 });
   }
 
-  if (targetUserId === community?.owner_id && !isOwner) {
-    return NextResponse.json({ error: "Cannot remove owner" }, { status: 403 });
+  const result = await leaveCommunity(db, id, rawTarget, user.id, user.role === "admin");
+  if (!result.ok) {
+    if (result.reason === "not_found") {
+      return NextResponse.json({ error: "Community not found" }, { status: 404 });
+    }
+    if (result.reason === "forbidden" || result.reason === "cannot_remove_owner") {
+      const message =
+        result.reason === "forbidden" ? "Forbidden" : "Cannot remove owner";
+      return NextResponse.json({ error: message }, { status: 403 });
+    }
+    return NextResponse.json({ error: "Owners cannot leave their community" }, { status: 400 });
   }
-
-  const { error } = await supabase
-    .from("community_members")
-    .delete()
-    .eq("community_id", id)
-    .eq("user_id", targetUserId);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
   return NextResponse.json({ success: true });
 }

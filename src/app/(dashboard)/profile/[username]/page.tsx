@@ -1,7 +1,11 @@
 import { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ProfilePageClient } from "./ProfilePageClient";
-import { createClient } from "@/lib/supabase/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, type UserDoc } from "@/lib/mongo/collections";
+import { getSessionUser } from "@/lib/auth/session";
+import { findUserById, findUserByUsername, followCounts, isFollowing } from "@/lib/db/users";
+import { toProfileJSON } from "@/lib/db/contracts";
 
 interface Props {
   params: Promise<{ username: string }>;
@@ -12,6 +16,8 @@ interface ProfileData {
   username: string;
   display_name: string | null;
   avatar_url: string | null;
+  cover_image_url: string | null;
+  accent: string | null;
   bio: string | null;
   role: string;
   class_grade: string | null;
@@ -33,132 +39,60 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
+function toProfileData(
+  user: UserDoc,
+  counts: { followers: number; following: number },
+  extra: { is_following: boolean; is_own: boolean }
+): ProfileData {
+  const base = toProfileJSON(user as unknown as Record<string, unknown>);
+  const created = base.created_at;
+  return {
+    ...(base as unknown as Omit<ProfileData, "followers_count" | "following_count" | "is_following" | "is_own" | "roles" | "created_at">),
+    created_at: created instanceof Date ? created.toISOString() : String(created ?? ""),
+    followers_count: counts.followers,
+    following_count: counts.following,
+    is_following: extra.is_following,
+    is_own: extra.is_own,
+    roles: [user.role],
+  };
+}
+
 export default async function ProfilePage({ params }: Props) {
   const { username } = await params;
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
+  const sessionUser = await getSessionUser(db);
 
   if (username === "@me") {
-    if (!user) notFound();
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
+    if (!sessionUser) notFound();
+    const profile = await findUserById(db, sessionUser.id);
     if (!profile) notFound();
-
-    const { count: followersCount } = await supabase
-      .from("follows")
-      .select("*", { count: "exact", head: true })
-      .eq("following_id", profile.id);
-
-    const { count: followingCount } = await supabase
-      .from("follows")
-      .select("*", { count: "exact", head: true })
-      .eq("follower_id", profile.id);
-
-    const roles = await supabase
-      .from("user_roles")
-      .select("role:roles!inner(name)")
-      .eq("user_id", profile.id);
-
-    type RoleRow = { role: { name: string } };
-    const roleNames = (roles.data as RoleRow[] | null)?.map(r => r.role?.name).filter(Boolean) || [];
-
-    const currentUserProfile: ProfileData = {
-      ...profile,
-      followers_count: followersCount || 0,
-      following_count: followingCount || 0,
-      is_following: false,
-      is_own: true,
-      roles: roleNames,
-    };
-
-    return <ProfilePageClient initialProfile={currentUserProfile} currentUser={currentUserProfile} targetUsername={profile.username} />;
+    const counts = await followCounts(db, profile._id);
+    const data = toProfileData(profile, counts, { is_following: false, is_own: true });
+    return <ProfilePageClient initialProfile={data} currentUser={data} targetUsername={profile.username} />;
   }
 
-  const { data: targetProfile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("username", username)
-    .single();
-
+  const targetProfile = await findUserByUsername(db, username);
   if (!targetProfile) notFound();
 
-  const { count: followersCount } = await supabase
-    .from("follows")
-    .select("*", { count: "exact", head: true })
-    .eq("following_id", targetProfile.id);
+  const counts = await followCounts(db, targetProfile._id);
 
-  const { count: followingCount } = await supabase
-    .from("follows")
-    .select("*", { count: "exact", head: true })
-    .eq("follower_id", targetProfile.id);
-
-  let isFollowing = false;
+  let following = false;
   let currentUserProfile: ProfileData | null = null;
 
-  if (user) {
-    const { data: follow } = await supabase
-      .from("follows")
-      .select("id")
-      .eq("follower_id", user.id)
-      .eq("following_id", targetProfile.id)
-      .single();
-    isFollowing = !!follow;
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-
-    if (profile) {
-      const { count: cf } = await supabase
-        .from("follows")
-        .select("*", { count: "exact", head: true })
-        .eq("following_id", profile.id);
-
-      const { count: cg } = await supabase
-        .from("follows")
-        .select("*", { count: "exact", head: true })
-        .eq("follower_id", profile.id);
-
-      const roles = await supabase
-        .from("user_roles")
-        .select("role:roles!inner(name)")
-        .eq("user_id", profile.id);
-
-      type RoleRow = { role: { name: string } };
-      const roleNames = (roles.data as RoleRow[] | null)?.map(r => r.role?.name).filter(Boolean) || [];
-
-      currentUserProfile = {
-        ...profile,
-        followers_count: cf || 0,
-        following_count: cg || 0,
-        is_following: false,
-        is_own: false,
-        roles: roleNames,
-      };
+  if (sessionUser) {
+    following = await isFollowing(db, sessionUser.id, targetProfile._id);
+    const mine = await findUserById(db, sessionUser.id);
+    if (mine) {
+      const myCounts = await followCounts(db, mine._id);
+      currentUserProfile = toProfileData(mine, myCounts, { is_following: false, is_own: false });
     }
   }
 
-  const roles = await supabase
-    .from("user_roles")
-    .select("role:roles!inner(name)")
-    .eq("user_id", targetProfile.id);
+  const data = toProfileData(targetProfile, counts, {
+    is_following: following,
+    is_own: !!sessionUser && sessionUser.id === targetProfile._id.toHexString(),
+  });
 
-  type RoleRow = { role: { name: string } };
-  const targetRoleNames = (roles.data as RoleRow[] | null)?.map(r => r.role?.name).filter(Boolean) || [];
-
-  const targetProfileData: ProfileData = {
-    ...targetProfile,
-    followers_count: followersCount || 0,
-    following_count: followingCount || 0,
-    is_following: isFollowing,
-    is_own: false,
-    roles: targetRoleNames,
-  };
-
-  return <ProfilePageClient initialProfile={targetProfileData} currentUser={currentUserProfile} targetUsername={username} />;
+  return <ProfilePageClient initialProfile={data} currentUser={currentUserProfile} targetUsername={username} />;
 }

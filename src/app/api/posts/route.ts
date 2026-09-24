@@ -1,78 +1,72 @@
-import { createClient } from "@/lib/supabase/server";
-import { postCreateSchema } from "@/lib/validation";
-import { getPostCounts } from "@/lib/db/counts";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type PendingMediaDoc } from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
+import { postCreateSchema } from "@/lib/validation";
+import { createPost, deleteOwnPost, getPost, listPosts, removePost } from "@/lib/db/posts";
+import { findUserByUsername } from "@/lib/db/users";
+import { toPostJSON } from "@/lib/db/contracts";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { parseLimitParam } from "@/lib/utils";
+
+async function authed() {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
+  }
+}
 
 export async function GET(request: Request) {
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db } = ctx;
+
   const { searchParams } = new URL(request.url);
   const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
   const author = searchParams.get("author");
+  const filter = searchParams.get("filter"); // "following" | undefined
 
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  let query = supabase
-    .from("posts")
-    .select(`
-      *,
-      author:profiles!posts_author_id_fkey(id, username, display_name, avatar_url),
-      media:post_media(*)
-    `)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (cursor) {
-    query = query.lt("created_at", cursor);
-  }
-
+  let authorId: string | undefined;
   if (author) {
-    const { data: authorProfile } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("username", author)
-      .single();
-    if (!authorProfile) {
-      return NextResponse.json({ posts: [] });
-    }
-    query = query.eq("author_id", authorProfile.id);
+    const profile = await findUserByUsername(db, author);
+    if (!profile) return NextResponse.json({ posts: [] });
+    authorId = profile._id.toHexString();
   }
 
-  const { data: posts, error } = await query;
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  let before: Date | undefined;
+  if (cursor) {
+    const parsed = new Date(cursor);
+    if (!isNaN(+parsed)) before = parsed;
   }
 
-  // Batched counts (reactions are polymorphic with no FK, so they cannot
-  // be embedded via PostgREST relationship traversal).
-  const { reactions, comments } = await getPostCounts(
-    supabase,
-    (posts ?? []).map((p) => p.id)
-  );
+  // Honest deterministic filters: chronological everywhere; "following"
+  // scopes to followed users (empty follow graph => empty list, not faked).
+  if (filter === "following") {
+    const follows = await col(db, "follows").find({ followerId: toObjectId(ctx.user.id) } as never).project({ followingId: 1 }).limit(500).toArray();
+    const ids = follows.map((f) => (f as unknown as Record<string, { toHexString(): string }>).followingId);
+    if (ids.length === 0) return NextResponse.json({ posts: [] });
+    const posts = await listPosts(db, { authorIds: ids.map((o) => String(o)), before, limit });
+    return NextResponse.json({
+      posts: posts.map((p) => toPostJSON(p as unknown as Record<string, unknown>)),
+    });
+  }
 
-  // Transform the data
-  const transformedPosts = posts?.map(post => ({
-    ...post,
-    reaction_count: reactions.get(post.id) ?? 0,
-    comment_count: comments.get(post.id) ?? 0,
-  })) || [];
-
-  return NextResponse.json({ posts: transformedPosts });
+  const posts = await listPosts(db, { authorId, before, limit });
+  return NextResponse.json({
+    posts: posts.map((p) => toPostJSON(p as unknown as Record<string, unknown>)),
+  });
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
   const formData = await request.formData();
   const content = formData.get("content") as string;
@@ -100,102 +94,66 @@ export async function POST(request: Request) {
     );
   }
 
-  // Create post
-  const { data: post, error: postError } = await supabase
-    .from("posts")
-    .insert({
-      author_id: user.id,
-      content: validated.data.content,
-    })
-    .select(`
-      *,
-      author:profiles!posts_author_id_fkey(id, username, display_name, avatar_url),
-      media:post_media(*)
-    `)
-    .single();
-
-  if (postError) {
-    return NextResponse.json({ error: postError.message }, { status: 500 });
-  }
-
-  // Link media if provided - verify ownership first
+  // Claim staged uploads (ownership verified: only the uploader's rows).
+  const media: Array<{ url: string; mediaType: "image" | "video"; thumbnailUrl: string | null; orderIndex: number }> = [];
   if (validated.data.mediaIds && validated.data.mediaIds.length > 0) {
-    for (const mediaId of validated.data.mediaIds) {
-      const { data: media } = await supabase
-        .from("post_media")
-        .select("post_id")
-        .eq("id", mediaId)
-        .single();
-
-      if (media && media.post_id === null) {
-        await supabase
-          .from("post_media")
-          .update({ post_id: post.id })
-          .eq("id", mediaId);
-      }
+    for (const [index, rawId] of validated.data.mediaIds.entries()) {
+      if (!objectIdSchema.safeParse(rawId).success) continue;
+      const staged = await col<PendingMediaDoc>(db, "pendingMedia").findOneAndDelete({
+        _id: toObjectId(rawId),
+        uploaderId: toObjectId(user.id),
+      } as never);
+      if (!staged) continue;
+      media.push({
+        url: staged.url,
+        mediaType: staged.mediaType,
+        thumbnailUrl: staged.thumbnailUrl,
+        orderIndex: index,
+      });
     }
   }
 
-  // Refetch with media
-  const { data: fullPost } = await supabase
-    .from("posts")
-    .select(`
-      *,
-      author:profiles!posts_author_id_fkey(id, username, display_name, avatar_url),
-      media:post_media(*)
-    `)
-    .eq("id", post.id)
-    .single();
+  const created = await createPost(db, {
+    authorId: user.id,
+    content: validated.data.content ?? null,
+    media,
+  });
+  if (!created.ok) {
+    return NextResponse.json(
+      { error: { content: ["Post must include text or media"] } },
+      { status: 400 }
+    );
+  }
 
-  return NextResponse.json({ post: fullPost });
+  const row = await getPost(db, created.postId);
+  if (!row) return NextResponse.json({ error: "Failed to create post" }, { status: 500 });
+  return NextResponse.json({ post: toPostJSON(row as unknown as Record<string, unknown>) });
 }
 
 export async function DELETE(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
   const { searchParams } = new URL(request.url);
   const postId = searchParams.get("id");
 
-  if (!postId) {
+  if (!postId || !objectIdSchema.safeParse(postId).success) {
     return NextResponse.json({ error: "Post ID required" }, { status: 400 });
   }
 
-  const { data: post } = await supabase
-    .from("posts")
-    .select("author_id")
-    .eq("id", postId)
-    .single();
+  // Owner path first; admins may remove anything.
+  if (await deleteOwnPost(db, postId, user.id)) {
+    return NextResponse.json({ success: true });
+  }
+  if (user.role === "admin" && (await removePost(db, postId))) {
+    return NextResponse.json({ success: true });
+  }
 
-  if (!post) {
+  // Distinguish missing (404) from forbidden (403).
+  const exists = await col(db, "posts").findOne({ _id: toObjectId(postId) } as never);
+  if (!exists) {
     return NextResponse.json({ error: "Post not found" }, { status: 404 });
   }
-
-  if (post.author_id !== user.id) {
-    const isAdmin = await supabase
-      .from("user_roles")
-      .select("role:roles!inner(name)")
-      .eq("user_id", user.id)
-      .eq("roles.name", "admin")
-      .then(({ data }) => (data?.length ?? 0) > 0);
-
-    if (!isAdmin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  }
-
-  const { error } = await supabase
-    .from("posts")
-    .update({ deleted_at: new Date().toISOString() })
-    .eq("id", postId);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 }

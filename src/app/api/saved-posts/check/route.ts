@@ -1,27 +1,28 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes } from "@/lib/mongo/collections";
+import { objectIdSchema } from "@/lib/mongo/ids";
+import { isPostSaved } from "@/lib/db/reactions";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let user;
+  try {
+    user = await requireSessionUser(db);
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
   const { searchParams } = new URL(request.url);
   const postId = searchParams.get("postId");
 
-  if (!postId) {
+  if (!postId || !objectIdSchema.safeParse(postId).success) {
     return NextResponse.json({ error: "Post ID required" }, { status: 400 });
   }
 
-  const { data } = await supabase
-    .from("saved_posts")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("post_id", postId)
-    .single();
-
-  return NextResponse.json({ saved: !!data });
+  return NextResponse.json({ saved: await isPostSaved(db, user.id, postId) });
 }

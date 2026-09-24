@@ -1,71 +1,71 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes } from "@/lib/mongo/collections";
+import { createVideo, listVideos, getVideo } from "@/lib/db/videos";
+import { toVideoJSON } from "@/lib/db/contracts";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { parseLimitParam } from "@/lib/utils";
 
 const videoCreateSchema = z.object({
   title: z.string().min(3).max(200),
   description: z.string().max(5000).optional(),
-  videoUrl: z.string().url().max(2000),
-  thumbnailUrl: z.string().url().max(2000).optional(),
+  videoUrl: z.string().max(2000),
+  thumbnailUrl: z.string().max(2000).optional(),
   category: z.string().max(50).optional(),
   duration: z.number().int().nonnegative().optional(),
 });
 
-export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function authed() {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
   }
+}
+
+export async function GET(request: Request) {
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
   const { searchParams } = new URL(request.url);
   const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
-  const category = searchParams.get("category");
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
+  const category = searchParams.get("category") || undefined;
   const mine = searchParams.get("mine") === "true";
-  const sort = searchParams.get("sort") === "popular" ? "view_count" : "created_at";
+  const popular = searchParams.get("sort") === "popular";
 
-  let query = supabase
-    .from("videos")
-    .select(`
-      *,
-      creator:profiles!videos_creator_id_fkey(id, username, display_name, avatar_url)
-    `)
-    .order(sort, { ascending: false })
-    .limit(limit);
-
-  if (mine) {
-    query = query.eq("creator_id", user.id);
-  } else {
-    // Public catalog shows processed videos; creators always see their own drafts.
-    query = query.or(`is_processed.eq.true,creator_id.eq.${user.id}`);
-  }
-
-  if (category) query = query.eq("category", category);
-  if (cursor) query = query.lt(sort, cursor);
-
-  const { data: videos, error } = await query;
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const videos = await listVideos(db, {
+    limit,
+    category,
+    mine: mine ? user.id : undefined,
+    sort: popular ? "popular" : "new",
+    cursor,
+  });
+  const mapped = videos.map((v) => toVideoJSON(v as unknown as Record<string, unknown>));
 
   return NextResponse.json({
-    videos: videos ?? [],
-    cursor: videos?.[videos.length - 1]?.[sort] ?? null,
-    hasMore: (videos?.length ?? 0) === limit,
+    videos: mapped,
+    cursor: mapped.length
+      ? popular
+        ? mapped[mapped.length - 1].view_count
+        : mapped[mapped.length - 1].created_at
+      : null,
+    hasMore: mapped.length === limit,
   });
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
   const validated = videoCreateSchema.safeParse(body);
 
   if (!validated.success) {
@@ -75,27 +75,27 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data: video, error } = await supabase
-    .from("videos")
-    .insert({
-      title: validated.data.title,
-      description: validated.data.description ?? null,
-      video_url: validated.data.videoUrl,
-      thumbnail_url: validated.data.thumbnailUrl ?? null,
-      category: validated.data.category ?? null,
-      duration: validated.data.duration ?? null,
-      creator_id: user.id,
-      is_processed: true,
-    })
-    .select(`
-      *,
-      creator:profiles!videos_creator_id_fkey(id, username, display_name, avatar_url)
-    `)
-    .single();
+  const created = await createVideo(db, user.id, {
+    title: validated.data.title,
+    description: validated.data.description,
+    videoUrl: validated.data.videoUrl,
+    thumbnailUrl: validated.data.thumbnailUrl,
+    category: validated.data.category,
+    duration: validated.data.duration,
+  });
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!created.ok) {
+    if (created.reason === "bad_thumbnail") {
+      return NextResponse.json({ error: { thumbnailUrl: ["Invalid thumbnail URL"] } }, { status: 400 });
+    }
+    if (created.reason === "bad_url") {
+      return NextResponse.json({ error: { videoUrl: ["Invalid video URL"] } }, { status: 400 });
+    }
+    return NextResponse.json({ error: "Invalid video data" }, { status: 400 });
   }
 
-  return NextResponse.json({ video });
+  const row = await getVideo(db, created.videoId);
+  return NextResponse.json({
+    video: row ? toVideoJSON(row as unknown as Record<string, unknown>) : { id: created.videoId.toHexString() },
+  });
 }

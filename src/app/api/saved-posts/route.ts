@@ -1,125 +1,103 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import { getPostCounts } from "@/lib/db/counts";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col } from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
+import { getPost, getPostsByIds } from "@/lib/db/posts";
+import { savePost, unsavePost } from "@/lib/db/reactions";
+import { toPostJSON } from "@/lib/db/contracts";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { parseLimitParam } from "@/lib/utils";
+
+async function authed() {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
+  }
+}
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const body = await request.json().catch(() => null);
+  const postId = body?.postId;
 
-  const body = await request.json();
-  const { postId } = body;
-
-  if (!postId) {
+  if (!postId || !objectIdSchema.safeParse(postId).success) {
     return NextResponse.json({ error: "Post ID required" }, { status: 400 });
   }
 
-  const { data: post } = await supabase
-    .from("posts")
-    .select("id")
-    .eq("id", postId)
-    .is("deleted_at", null)
-    .single();
-
+  const post = await getPost(db, postId);
   if (!post) {
     return NextResponse.json({ error: "Post not found" }, { status: 404 });
   }
 
-  const { error } = await supabase
-    .from("saved_posts")
-    .insert({
-      user_id: user.id,
-      post_id: postId,
-    });
-
-  if (error) {
-    if (error.code === "23505") {
-      return NextResponse.json({ error: "Already saved" }, { status: 400 });
-    }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const saved = await savePost(db, user.id, postId);
+  if ("already" in saved) {
+    return NextResponse.json({ error: "Already saved" }, { status: 400 });
   }
-
   return NextResponse.json({ success: true });
 }
 
 export async function DELETE(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
   const { searchParams } = new URL(request.url);
   const postId = searchParams.get("postId");
 
-  if (!postId) {
+  if (!postId || !objectIdSchema.safeParse(postId).success) {
     return NextResponse.json({ error: "Post ID required" }, { status: 400 });
   }
 
-  const { error } = await supabase
-    .from("saved_posts")
-    .delete()
-    .eq("user_id", user.id)
-    .eq("post_id", postId);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
+  await unsavePost(db, user.id, postId);
   return NextResponse.json({ success: true });
 }
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
   const { searchParams } = new URL(request.url);
   const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
-  let query = supabase
-    .from("saved_posts")
-    .select(`
-      *,
-      post:posts!saved_posts_post_id_fkey(
-        *,
-        author:profiles!posts_author_id_fkey(id, username, display_name, avatar_url),
-        media:post_media(*)
-      )
-    `)
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
+  const filter: Record<string, unknown> = { userId: toObjectId(user.id) };
   if (cursor) {
-    query = query.lt("created_at", cursor);
+    const parsed = new Date(cursor);
+    if (!isNaN(+parsed)) filter.createdAt = { $lt: parsed };
   }
 
-  const { data: savedPosts, error } = await query;
+  const rows = await col(db, "savedPosts")
+    .find(filter as never)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  const { reactions, comments } = await getPostCounts(
-    supabase,
-    (savedPosts ?? []).map((sp) => sp.post?.id).filter(Boolean) as string[]
+  const posts = await getPostsByIds(
+    db,
+    rows.map((sp) => (sp.postId as unknown as string))
   );
+  const byId = new Map(
+    posts.map((p) => [String((p as unknown as Record<string, unknown>).id), p])
+  );
+  const result = rows
+    .map((sp) => {
+      const post = byId.get(String(sp.postId));
+      if (!post) return null;
+      return {
+        ...toPostJSON(post as unknown as Record<string, unknown>),
+        saved_at: sp.createdAt,
+      };
+    })
+    .filter(Boolean);
 
-  const posts = savedPosts?.map(sp => ({
-    ...sp.post,
-    reaction_count: sp.post ? (reactions.get(sp.post.id) ?? 0) : 0,
-    comment_count: sp.post ? (comments.get(sp.post.id) ?? 0) : 0,
-    saved_at: sp.created_at,
-  })).filter(Boolean) || [];
-
-  return NextResponse.json({ posts });
+  return NextResponse.json({ posts: result });
 }

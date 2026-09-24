@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { formatRelativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -98,13 +98,21 @@ export function CommunityDetailClient({ initialCommunity, currentUserId }: Commu
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
+  // Cursor/loading refs: fetchPosts reads these instead of closing over
+  // state, so "Load more" never triggers a stale full-reload that would
+  // replace the appended page (effect deps stay stable).
+  const postsCursorRef = useRef<string | null>(null);
+  const postsHasMoreRef = useRef(true);
+  const postsLoadingRef = useRef(false);
+
   const fetchPosts = useCallback(async (isLoadMore = false) => {
-    if (isLoadMore && (!postsHasMore || postsLoading)) return;
+    if (isLoadMore && (!postsHasMoreRef.current || postsLoadingRef.current)) return;
+    postsLoadingRef.current = true;
     setPostsLoading(true);
 
     try {
       const params = new URLSearchParams({ limit: "20" });
-      if (postsCursor) params.set("cursor", postsCursor);
+      if (postsCursorRef.current) params.set("cursor", postsCursorRef.current);
 
       const response = await fetch(`/api/communities/${community.id}/posts?${params.toString()}`);
       const data = await response.json();
@@ -115,15 +123,18 @@ export function CommunityDetailClient({ initialCommunity, currentUserId }: Commu
         } else {
           setPosts(data.posts);
         }
+        postsCursorRef.current = data.cursor ?? null;
+        postsHasMoreRef.current = !!data.hasMore;
         setPostsCursor(data.cursor);
         setPostsHasMore(data.hasMore);
       }
     } catch (error) {
       console.error("Failed to fetch posts:", error);
     } finally {
+      postsLoadingRef.current = false;
       setPostsLoading(false);
     }
-  }, [community.id, postsCursor, postsHasMore, postsLoading]);
+  }, [community.id]);
 
   const fetchMembers = useCallback(async () => {
     setMembersLoading(true);
@@ -345,9 +356,10 @@ export function CommunityDetailClient({ initialCommunity, currentUserId }: Commu
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="posts">Posts</TabsTrigger>
-          <TabsTrigger value="members">Members ({community.member_count})</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="posts" className="min-h-[44px]">Posts</TabsTrigger>
+          <TabsTrigger value="polls" className="min-h-[44px]">Polls</TabsTrigger>
+          <TabsTrigger value="members" className="min-h-[44px]">Members ({community.member_count})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="posts" className="mt-4">
@@ -400,6 +412,10 @@ export function CommunityDetailClient({ initialCommunity, currentUserId }: Commu
               </Button>
             )}
           </div>
+        </TabsContent>
+
+        <TabsContent value="polls" className="mt-4">
+          <CommunityPolls communityId={community.id} isMember={community.is_member} />
         </TabsContent>
 
         <TabsContent value="members" className="mt-4">
@@ -524,6 +540,144 @@ function MemberCard({ member, isModerator, currentUserId, communityId }: {
           </select>
         )}
       </div>
+    </div>
+  );
+}
+
+function CommunityPolls({ communityId, isMember }: { communityId: string; isMember: boolean }) {
+  const [polls, setPolls] = useState<Array<{
+    id: string; question: string; options: string[]; counts: number[];
+    totalVotes: number; myVote: number | null; closesAt?: string | null;
+    author?: { display_name?: string | null; username?: string } | null;
+  }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [question, setQuestion] = useState("");
+  const [options, setOptions] = useState(["", ""]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/polls?communityId=${communityId}`);
+      const json = await res.json();
+      if (res.ok) setPolls(json.polls ?? []);
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, [communityId]);
+
+  // Initial polls load only.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+
+  const vote = async (pollId: string, idx: number) => {
+    setPolls((prev) => prev.map((p) => {
+      if (p.id !== pollId) return p;
+      const counts = [...p.counts];
+      if (p.myVote != null && p.myVote >= 0) counts[p.myVote] = Math.max(0, counts[p.myVote] - 1);
+      counts[idx] = (counts[idx] ?? 0) + 1;
+      return { ...p, counts, totalVotes: counts.reduce((a, b) => a + b, 0), myVote: idx };
+    }));
+    try {
+      await fetch(`/api/polls/${pollId}/vote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ optionIndex: idx }),
+      });
+    } catch { /* optimistic */ }
+  };
+
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const clean = options.map((o) => o.trim()).filter(Boolean);
+      if (!question.trim() || clean.length < 2) {
+        setError("Add a question and at least two options");
+        return;
+      }
+      const res = await fetch("/api/polls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ communityId, question: question.trim(), options: clean }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => null);
+        throw new Error(typeof j?.error === "string" ? j.error : "Could not create poll");
+      }
+      setQuestion("");
+      setOptions(["", ""]);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create poll");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loading) return <p className="py-6 text-center text-sm text-muted-foreground">Loading polls…</p>;
+
+  return (
+    <div className="space-y-3">
+      {isMember && (
+        <Card>
+          <CardContent className="space-y-2 pt-4">
+            <form onSubmit={create} className="space-y-2" aria-label="Create poll">
+              <label htmlFor="poll-q" className="text-sm font-medium">Ask the community</label>
+              <Textarea id="poll-q" value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={500} placeholder="Which day works for the study session?" rows={2} />
+              {options.map((o, i) => (
+                <input
+                  key={i}
+                  value={o}
+                  onChange={(e) => setOptions((prev) => prev.map((x, j) => (j === i ? e.target.value : x)))}
+                  placeholder={`Option ${i + 1}`}
+                  maxLength={120}
+                  aria-label={`Option ${i + 1}`}
+                  className="min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm"
+                />
+              ))}
+              <div className="flex gap-2">
+                {options.length < 6 && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setOptions((p) => [...p, ""])}>Add option</Button>
+                )}
+                <Button type="submit" size="sm" disabled={busy} className="ml-auto">{busy ? "Posting…" : "Post poll"}</Button>
+              </div>
+              {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+            </form>
+          </CardContent>
+        </Card>
+      )}
+      {polls.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">No polls yet. Start the first community vote.</p>}
+      {polls.map((p) => (
+        <Card key={p.id}>
+          <CardContent className="space-y-2 pt-4">
+            <p className="text-sm font-semibold">{p.question}</p>
+            <p className="text-xs text-muted-foreground">{p.totalVotes} {p.totalVotes === 1 ? "vote" : "votes"}</p>
+            <div className="space-y-1.5">
+              {p.options.map((opt, i) => {
+                const pct = p.totalVotes > 0 ? Math.round(((p.counts[i] ?? 0) / p.totalVotes) * 100) : 0;
+                const mine = p.myVote === i;
+                return (
+                  <button
+                    key={i}
+                    disabled={!isMember}
+                    onClick={() => vote(p.id, i)}
+                    aria-pressed={mine}
+                    className={cn("relative min-h-[44px] w-full overflow-hidden rounded-xl border px-3 text-left text-sm", mine ? "border-primary" : "border-border hover:border-primary/50")}
+                  >
+                    <span className="absolute inset-y-0 left-0 bg-primary/10" style={{ width: `${pct}%` }} aria-hidden="true" />
+                    <span className="relative flex items-center justify-between gap-2">
+                      <span className="truncate font-medium">{opt}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{pct}% · {p.counts[i] ?? 0}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }

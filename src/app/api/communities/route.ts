@@ -1,92 +1,115 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type CommunityDoc } from "@/lib/mongo/collections";
+import { toObjectId } from "@/lib/mongo/ids";
 import { communityCreateSchema } from "@/lib/validation";
+import { createCommunity } from "@/lib/db/communities";
+import { resolveAuthors } from "@/lib/db/authors";
+import { toCommunityJSON } from "@/lib/db/contracts";
+import { parseLimitParam } from "@/lib/utils";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function authed() {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
+  }
+}
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
   const { searchParams } = new URL(request.url);
-  const search = searchParams.get("search");
+  const search = (searchParams.get("search") || "").trim().slice(0, 100);
   const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
-  // Escape wildcard characters so user search input can't inject patterns.
-  const escapeLike = (s: string) => s.replace(/[%_,\\]/g, (m) => `\\${m}`);
-
-  let query = supabase
-    .from("communities")
-    .select(`
-      *,
-      owner:profiles!communities_owner_id_fkey(id, username, display_name, avatar_url),
-      members:community_members(count)
-    `)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (cursor) {
-    query = query.lt("created_at", cursor);
-  }
-
+  const uid = toObjectId(user.id);
+  const and: Record<string, unknown>[] = [];
   if (search) {
-    const safe = escapeLike(search);
-    query = query.or(`name.ilike.%${safe}%,description.ilike.%${safe}%`);
+    const rx = { $regex: escapeRegExp(search), $options: "i" };
+    and.push({ $or: [{ name: rx }, { description: rx }] });
+  }
+  // Private communities are visible only to members, the owner, and admins.
+  if (user.role !== "admin") {
+    const mine = await col(db, "communityMembers")
+      .find({ userId: uid } as never)
+      .project({ communityId: 1 })
+      .toArray();
+    const memberIds = mine.map((m) => m.communityId);
+    and.push({ $or: [{ isPrivate: false }, { _id: { $in: memberIds } }, { ownerId: uid }] });
+  }
+  const filter: Record<string, unknown> = and.length ? { $and: and } : {};
+  if (cursor) {
+    const parsed = new Date(cursor);
+    if (!isNaN(+parsed)) filter.createdAt = { $lt: parsed };
   }
 
-  const { data: communities, error } = await query;
+  const rows = await col<CommunityDoc>(db, "communities")
+    .find(filter as never)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  const ids = rows.map((c) => c._id);
+  const [counts, memberships, owners] = await Promise.all([
+    ids.length
+      ? col(db, "communityMembers")
+          .aggregate([
+            { $match: { communityId: { $in: ids } } },
+            { $group: { _id: "$communityId", n: { $sum: 1 } } },
+          ])
+          .toArray()
+      : Promise.resolve([]),
+    ids.length
+      ? col(db, "communityMembers")
+          .find({ communityId: { $in: ids }, userId: toObjectId(user.id) } as never)
+          .toArray()
+      : Promise.resolve([]),
+    resolveAuthors(
+      db,
+      rows.map((c) => c.ownerId)
+    ),
+  ]);
+  const countMap = new Map(counts.map((c) => [String(c._id), c.n as number]));
+  const roleMap = new Map(memberships.map((m) => [m.communityId.toHexString(), m.role as string]));
 
-  const currentUserId = user.id;
-
-  // Batch membership lookup (avoids !inner which hides empty communities).
-  const communityIds = (communities ?? []).map((c) => c.id);
-  const membershipMap = new Map<string, string>();
-  if (communityIds.length > 0) {
-    const { data: memberships } = await supabase
-      .from("community_members")
-      .select("community_id, role")
-      .eq("user_id", currentUserId)
-      .in("community_id", communityIds);
-    for (const m of memberships ?? []) membershipMap.set(m.community_id, m.role);
-  }
-
-  const transformedCommunities = communities?.map(community => {
-    const memberRole = membershipMap.get(community.id);
-    const isMember = !!memberRole;
-    const isOwner = community.owner_id === currentUserId;
-
-    return {
-      ...community,
-      member_count: community.members?.[0]?.count || 0,
-      is_member: isMember,
-      is_owner: isOwner,
-      member_role: memberRole || "none",
-    };
-  }) || [];
+  const communities = rows.map((c) => {
+    const role = roleMap.get(c._id.toHexString());
+    return toCommunityJSON({
+      ...c,
+      memberCount: countMap.get(c._id.toHexString()) ?? 0,
+      isMember: !!role,
+      isOwner: c.ownerId.equals(toObjectId(user.id)),
+      memberRole: role ?? "none",
+      owner: owners.get(c.ownerId.toHexString()) ?? null,
+    } as unknown as Record<string, unknown>);
+  });
 
   return NextResponse.json({
-    communities: transformedCommunities,
-    cursor: transformedCommunities[transformedCommunities.length - 1]?.created_at || null,
-    hasMore: transformedCommunities.length === limit,
+    communities,
+    cursor: rows.length ? rows[rows.length - 1].createdAt : null,
+    hasMore: rows.length === limit,
   });
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
   const validated = communityCreateSchema.safeParse(body);
 
   if (!validated.success) {
@@ -96,36 +119,34 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data: community, error } = await supabase
-    .from("communities")
-    .insert({
-      name: validated.data.name,
-      slug: validated.data.slug,
-      description: validated.data.description ?? null,
-      is_private: validated.data.isPrivate ?? false,
-      owner_id: user.id,
-    })
-    .select(`
-      *,
-      owner:profiles!communities_owner_id_fkey(id, username, display_name, avatar_url)
-    `)
-    .single();
+  const created = await createCommunity(db, user.id, {
+    name: validated.data.name,
+    slug: validated.data.slug,
+    description: validated.data.description ?? null,
+    isPrivate: validated.data.isPrivate ?? false,
+  });
 
-  if (error) {
-    if (error.code === "23505") {
+  if (!created.ok) {
+    if (created.reason === "slug_taken") {
       return NextResponse.json({ error: { slug: ["Slug already taken"] } }, { status: 400 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: { _form: ["Invalid community data"] } }, { status: 400 });
   }
 
-  // Add owner as member
-  await supabase
-    .from("community_members")
-    .insert({
-      community_id: community.id,
-      user_id: user.id,
-      role: "owner",
-    });
-
-  return NextResponse.json({ community });
+  const row = await col<CommunityDoc>(db, "communities").findOne({
+    _id: created.communityId,
+  } as never);
+  const owners = await resolveAuthors(db, row ? [row.ownerId] : []);
+  return NextResponse.json({
+    community: row
+      ? toCommunityJSON({
+          ...row,
+          memberCount: 1,
+          isMember: true,
+          isOwner: true,
+          memberRole: "owner",
+          owner: owners.get(row.ownerId.toHexString()) ?? null,
+        } as unknown as Record<string, unknown>)
+      : null,
+  });
 }

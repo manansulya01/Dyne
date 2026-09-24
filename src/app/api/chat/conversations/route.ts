@@ -1,170 +1,94 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { z } from "zod";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes } from "@/lib/mongo/collections";
+import { objectIdSchema } from "@/lib/mongo/ids";
+import { createConversation, listConversations } from "@/lib/db/chat";
+import { toConversationJSON } from "@/lib/db/contracts";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { parseLimitParam } from "@/lib/utils";
+
+const createSchema = z.object({
+  participantIds: z.array(objectIdSchema).min(1, "Participant IDs required"),
+  type: z.enum(["direct", "group"]).default("direct"),
+  name: z.string().max(100).optional(),
+});
+
+async function authed() {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
+  }
+}
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
   const { searchParams } = new URL(request.url);
-  const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
-  // Only return conversations the current user belongs to — never trust
-  // client-supplied membership. Two-step: membership ids first, then fetch.
-  const { data: memberships } = await supabase
-    .from("conversation_members")
-    .select("conversation_id, last_read_at")
-    .eq("user_id", user.id);
-
-  const conversationIds = (memberships ?? []).map((m) => m.conversation_id);
-  if (conversationIds.length === 0) {
-    return NextResponse.json({ conversations: [], cursor: null, hasMore: false });
-  }
-
-  let query = supabase
-    .from("conversations")
-    .select(`
-      *,
-      members:conversation_members(
-        user_id,
-        last_read_at,
-        user:profiles!conversation_members_user_id_fkey(id, username, display_name, avatar_url)
-      ),
-      last_message:messages!messages_conversation_id_fkey(
-        id,
-        content,
-        sender_id,
-        created_at,
-        sender:profiles!messages_sender_id_fkey(id, username, display_name, avatar_url)
-      )
-    `)
-    .in("id", conversationIds)
-    .order("updated_at", { ascending: false })
-    .order("created_at", { foreignTable: "messages", ascending: false })
-    .limit(limit);
-
-  if (cursor) {
-    query = query.lt("updated_at", cursor);
-  }
-
-  const { data: conversations, error } = await query;
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  const currentUserId = user.id;
-
-  const transformedConversations = conversations?.map(conv => {
-    const members = (conv.members ?? []) as Array<{ user_id: string; last_read_at: string | null; user: { id: string } | null }>;
-    const lastMessages = (conv.last_message ?? []) as Array<{ created_at: string }>;
-    const otherMembers = members.filter((m) => m.user?.id !== currentUserId) || [];
-    const otherMember = otherMembers[0]?.user;
-
-    // Unread = last message newer than our last_read_at.
-    let unreadCount = 0;
-    const myMembership = members.find((m) => m.user_id === currentUserId);
-    const latest = lastMessages[0];
-    if (latest && (!myMembership?.last_read_at || new Date(latest.created_at) > new Date(myMembership.last_read_at))) {
-      unreadCount = 1;
-    }
-
-    return {
-      ...conv,
-      other_member: otherMember,
-      unread_count: unreadCount,
-      last_message: conv.last_message?.[0] || null,
-    };
-  }) || [];
+  const conversations = await listConversations(db, user.id, limit);
+  const mapped = conversations.map((c) =>
+    toConversationJSON(c as unknown as Record<string, unknown>)
+  );
 
   return NextResponse.json({
-    conversations: transformedConversations,
-    cursor: transformedConversations[transformedConversations.length - 1]?.updated_at || null,
-    hasMore: transformedConversations.length === limit,
+    conversations: mapped,
+    cursor: mapped.length ? mapped[mapped.length - 1].updated_at : null,
+    hasMore: mapped.length === limit,
   });
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const body = await request.json();
-  const { participantIds, type = "direct" } = body;
-
-  if (!participantIds || !Array.isArray(participantIds) || participantIds.length === 0) {
+  const body = await request.json().catch(() => null);
+  const validated = createSchema.safeParse(body);
+  if (!validated.success) {
     return NextResponse.json({ error: "Participant IDs required" }, { status: 400 });
   }
-
-  if (type === "direct" && participantIds.length !== 1) {
-    return NextResponse.json({ error: "Direct conversations require exactly 1 participant" }, { status: 400 });
+  if (validated.data.type === "direct" && validated.data.participantIds.length !== 1) {
+    return NextResponse.json(
+      { error: "Direct conversations require exactly 1 participant" },
+      { status: 400 }
+    );
   }
 
-  const allParticipantIds = [user.id, ...participantIds];
+  const created = await createConversation(db, user.id, {
+    type: validated.data.type,
+    participantIds: validated.data.participantIds,
+    name: validated.data.name,
+  });
 
-  // For direct conversations, check if one already exists
-  if (type === "direct") {
-    const { data: existingConv } = await supabase
-      .from("conversations")
-      .select(`
-        id,
-        members:conversation_members!inner(user_id)
-      `)
-      .eq("type", "direct")
-      .in("members.user_id", allParticipantIds)
-      .single();
-
-    // Check if it has exactly the right members
-    if (existingConv && existingConv.members.length === 2) {
-      const memberIds = (existingConv.members as Array<{ user_id: string }>).map((m) => m.user_id).sort();
-      const targetIds = allParticipantIds.sort();
-      if (JSON.stringify(memberIds) === JSON.stringify(targetIds)) {
-        return NextResponse.json({ conversation: existingConv });
-      }
-    }
+  if (!created.ok) {
+    const messages: Record<string, string> = {
+      direct_needs_one: "Direct conversations require exactly 1 participant",
+      no_participants: "Participant IDs required",
+      unknown_user: "User not found",
+    };
+    return NextResponse.json(
+      { error: messages[created.reason] ?? "Could not create conversation" },
+      { status: created.reason === "unknown_user" ? 404 : 400 }
+    );
   }
 
-  const { data: conversation, error } = await supabase
-    .from("conversations")
-    .insert({
-      type,
-      created_by: user.id,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  // Add members
-  const memberInserts = allParticipantIds.map(userId => ({
-    conversation_id: conversation.id,
-    user_id: userId,
-  }));
-
-  await supabase
-    .from("conversation_members")
-    .insert(memberInserts);
-
-  // Fetch full conversation with members
-  const { data: fullConv } = await supabase
-    .from("conversations")
-    .select(`
-      *,
-      members:conversation_members!inner(
-        user:profiles!conversation_members_user_id_fkey(id, username, display_name, avatar_url)
-      )
-    `)
-    .eq("id", conversation.id)
-    .single();
-
-  return NextResponse.json({ conversation: fullConv });
+  // Return the full conversation shape (deduped direct convos included).
+  const conversations = await listConversations(db, user.id, 50);
+  const full = conversations.find(
+    (c) => String((c as unknown as Record<string, unknown>).id) === created.conversationId.toHexString()
+  );
+  return NextResponse.json({
+    conversation: full
+      ? toConversationJSON(full as unknown as Record<string, unknown>)
+      : { id: created.conversationId.toHexString() },
+  });
 }

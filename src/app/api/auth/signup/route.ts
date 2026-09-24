@@ -1,12 +1,18 @@
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { ensureProfile } from "@/lib/auth/ensureProfile";
-import { signupSchema } from "@/lib/validation";
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes } from "@/lib/mongo/collections";
+import { signupSchema } from "@/lib/validation";
+import { createUser } from "@/lib/db/users";
+import {
+  createSession,
+  SESSION_COOKIE,
+  sessionCookieOptions,
+} from "@/lib/auth/session";
 
 export async function POST(request: Request) {
   const formData = await request.formData();
-  
+
   const validated = signupSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password"),
@@ -14,71 +20,47 @@ export async function POST(request: Request) {
     username: formData.get("username"),
     displayName: formData.get("displayName"),
   });
-  
+
   if (!validated.success) {
     return NextResponse.json(
       { error: validated.error.flatten().fieldErrors },
       { status: 400 }
     );
   }
-  
-  const supabase = await createClient();
-  
-  const { data: authData, error: authError } = await supabase.auth.signUp({
+
+  const db = await getDb();
+  await ensureIndexes(db);
+
+  const created = await createUser(db, {
     email: validated.data.email,
     password: validated.data.password,
-    options: {
-      data: {
-        username: validated.data.username,
-        display_name: validated.data.displayName,
-      },
-    },
+    username: validated.data.username,
+    displayName: validated.data.displayName,
   });
-  
-  if (authError) {
-    return NextResponse.json(
-      { error: { _form: [authError.message] } },
-      { status: 400 }
-    );
-  }
-  
-  if (authData.user) {
-    // Guard against GoTrue's account-enumeration protection: signing up with
-    // an already-registered email returns an obfuscated placeholder user that
-    // does NOT exist in auth.users. Creating a profile for it would violate
-    // the profiles.id foreign key, so verify first.
-    const admin = createAdminClient();
-    const { data: realUser, error: lookupError } = await admin.auth.admin.getUserById(
-      authData.user.id
-    );
-    if (lookupError || !realUser?.user) {
+
+  if (!created.ok) {
+    if (created.reason === "username_taken") {
       return NextResponse.json(
-        { error: { _form: ["User already registered. Try logging in instead."] } },
+        { error: { username: ["Username is already taken"] } },
         { status: 400 }
       );
     }
-
-    // Server-side profile creation (admin client): works whether or not
-    // email confirmation returned a session. Role is hardcoded student.
-    const result = await ensureProfile(
-      authData.user.id,
-      validated.data.username,
-      validated.data.displayName
+    return NextResponse.json(
+      { error: { email: ["An account with this email already exists"] } },
+      { status: 400 }
     );
-
-    if (!result.ok) {
-      if (result.field) {
-        return NextResponse.json(
-          { error: { [result.field]: [result.message] } },
-          { status: 400 }
-        );
-      }
-      return NextResponse.json(
-        { error: { _form: [result.message] } },
-        { status: 500 }
-      );
-    }
   }
-  
+
+  const { token, expiresAt } = await createSession(
+    db,
+    created.userId,
+    request.headers.get("user-agent") ?? undefined
+  );
+  const store = await cookies();
+  store.set(SESSION_COOKIE, token, {
+    ...sessionCookieOptions(),
+    expires: expiresAt,
+  });
+
   return NextResponse.json({ success: true });
 }

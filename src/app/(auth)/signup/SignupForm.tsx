@@ -25,32 +25,37 @@ export default function SignupForm() {
     setIsLoading(true);
     setError(null);
 
-    const formData = new FormData();
-    formData.append("email", data.email);
-    formData.append("password", data.password);
-    formData.append("confirmPassword", data.confirmPassword);
-    formData.append("username", data.username);
-    formData.append("displayName", data.displayName);
+    try {
+      const formData = new FormData();
+      formData.append("email", data.email);
+      formData.append("password", data.password);
+      formData.append("confirmPassword", data.confirmPassword);
+      formData.append("username", data.username);
+      formData.append("displayName", data.displayName);
 
-    const response = await fetch("/api/auth/signup", {
-      method: "POST",
-      body: formData,
-    });
+      const response = await fetch("/api/auth/signup", {
+        method: "POST",
+        body: formData,
+      });
 
-    const result = await response.json();
+      const result = await response.json();
 
-    if (result.error) {
-      if (result.error._form) {
-        setError(result.error._form[0]);
-      } else {
-        setError("Registration failed. Please try again.");
+      if (result.error) {
+        if (result.error._form) {
+          setError(result.error._form[0]);
+        } else {
+          setError("Registration failed. Please try again.");
+        }
+        return;
       }
-      setIsLoading(false);
-      return;
-    }
 
-    router.refresh();
-    router.push("/feed");
+      router.refresh();
+      router.push("/feed");
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

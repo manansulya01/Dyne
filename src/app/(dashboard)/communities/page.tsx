@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import { CommunitiesPageClient } from "./CommunitiesPageClient";
-import { createClient } from "@/lib/supabase/server";
+import { getDb } from "@/lib/mongo/client";
+import { getSessionUser } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
   title: "Communities - Dyne",
@@ -8,18 +9,7 @@ export const metadata: Metadata = {
 };
 
 export default async function CommunitiesPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return <CommunitiesPageClient currentUserId={null} />;
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("id", user.id)
-    .single();
-
-  return <CommunitiesPageClient currentUserId={profile?.id || null} />;
+  const db = await getDb();
+  const user = await getSessionUser(db);
+  return <CommunitiesPageClient currentUserId={user?.id || null} />;
 }

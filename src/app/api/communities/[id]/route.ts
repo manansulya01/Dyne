@@ -1,77 +1,90 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type CommunityDoc } from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { communityCreateSchema } from "@/lib/validation";
+import { getCommunity, memberRole, updateCommunity } from "@/lib/db/communities";
+import { resolveAuthors } from "@/lib/db/authors";
+import { toCommunityJSON } from "@/lib/db/contracts";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+interface Params {
+  params: Promise<{ id: string }>;
+}
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function authed(rawId: string) {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    if (!objectIdSchema.safeParse(rawId).success) {
+      return { db, error: NextResponse.json({ error: "Community not found" }, { status: 404 }) };
+    }
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
   }
+}
 
-  const { id } = await params;
-
-  const { data: community, error } = await supabase
-    .from("communities")
-    .select(`
-      *,
-      owner:profiles!communities_owner_id_fkey(id, username, display_name, avatar_url),
-      members:community_members(count)
-    `)
-    .eq("id", id)
-    .single();
-
-  if (error || !community) {
-    return NextResponse.json({ error: "Community not found" }, { status: 404 });
-  }
-
-  // Check if private and user is not a member
-  let memberRole = "none";
-  {
-    const { data: memberData } = await supabase
-      .from("community_members")
-      .select("role")
-      .eq("community_id", id)
-      .eq("user_id", user.id)
-      .single();
-    if (memberData) memberRole = memberData.role;
-  }
-  if (community.is_private && memberRole === "none" && community.owner_id !== user.id) {
-    return NextResponse.json({ error: "This community is private" }, { status: 403 });
-  }
-
-  const currentUserId = user.id;
-  const isMember = memberRole !== "none";
-  const isOwner = community.owner_id === currentUserId;
-
-  return NextResponse.json({
-    community: {
-      ...community,
-      member_count: community.members?.[0]?.count || 0,
-      is_member: isMember,
-      is_owner: isOwner,
-      member_role: memberRole,
-    },
+async function communityPayload(db: Awaited<ReturnType<typeof getDb>>, id: string, userId: string) {
+  const row = await getCommunity(db, id);
+  if (!row) return null;
+  const raw = row as unknown as Record<string, unknown>;
+  const role = await memberRole(db, id, userId);
+  const ownerId = String(raw.ownerId ?? raw.owner_id);
+  const owners = await resolveAuthors(db, [toObjectId(ownerId)]);
+  return toCommunityJSON({
+    ...raw,
+    isMember: !!role,
+    isOwner: ownerId === userId,
+    memberRole: role ?? "none",
+    owner: owners.get(ownerId) ?? null,
   });
 }
 
-export async function PATCH(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+export async function GET(_request: Request, { params }: Params) {
+  const { id } = await params;
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const community = await col<CommunityDoc>(db, "communities").findOne({
+    _id: toObjectId(id),
+  } as never);
+  if (!community) {
+    return NextResponse.json({ error: "Community not found" }, { status: 404 });
   }
 
+  const role = await memberRole(db, id, user.id);
+  if (
+    community.isPrivate &&
+    !role &&
+    !community.ownerId.equals(toObjectId(user.id)) &&
+    user.role !== "admin"
+  ) {
+    return NextResponse.json({ error: "This community is private" }, { status: 403 });
+  }
+
+  const payload = await communityPayload(db, id, user.id);
+  return NextResponse.json({ community: payload });
+}
+
+export async function PATCH(request: Request, { params }: Params) {
   const { id } = await params;
-  const body = await request.json();
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
+
+  const body = await request.json().catch(() => null);
+  if (body && typeof body === "object" && "slug" in (body as Record<string, unknown>)) {
+    return NextResponse.json({ error: { slug: ["Slug cannot be changed"] } }, { status: 400 });
+  }
+  // NOTE: communityCreateSchema.isPrivate has a `.default(false)` which Zod
+  // applies even under `.partial()` — an omitted key would parse to `false`
+  // and flip private communities public. Gate on raw-body key presence so
+  // omitted fields are never treated as intent.
+  const rawBody = (body ?? {}) as Record<string, unknown>;
   const validated = communityCreateSchema.partial().safeParse(body);
 
   if (!validated.success) {
@@ -81,101 +94,72 @@ export async function PATCH(
     );
   }
 
-  const { data: community } = await supabase
-    .from("communities")
-    .select("owner_id")
-    .eq("id", id)
-    .single();
-
+  const community = await col<CommunityDoc>(db, "communities").findOne({
+    _id: toObjectId(id),
+  } as never);
   if (!community) {
     return NextResponse.json({ error: "Community not found" }, { status: 404 });
   }
 
-  let canEdit = community.owner_id === user.id;
+  let canEdit =
+    community.ownerId.equals(toObjectId(user.id)) || user.role === "admin";
   if (!canEdit) {
-    const { data: membership } = await supabase
-      .from("community_members")
-      .select("role")
-      .eq("community_id", id)
-      .eq("user_id", user.id)
-      .single();
-    canEdit = membership?.role === "moderator" || membership?.role === "owner";
-  }
-  if (!canEdit) {
-    const { data: admin } = await supabase
-      .from("user_roles")
-      .select("role:roles!inner(name)")
-      .eq("user_id", user.id)
-      .eq("roles.name", "admin");
-    canEdit = (admin?.length ?? 0) > 0;
+    const role = await memberRole(db, id, user.id);
+    canEdit = role === "moderator" || role === "owner";
   }
   if (!canEdit) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const updatePayload: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  if (validated.data.name !== undefined) updatePayload.name = validated.data.name;
-  if (validated.data.description !== undefined) updatePayload.description = validated.data.description;
-  if (validated.data.isPrivate !== undefined) updatePayload.is_private = validated.data.isPrivate;
-
-  const { data: updated, error } = await supabase
-    .from("communities")
-    .update(updatePayload)
-    .eq("id", id)
-    .select()
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const patch: { name?: string; description?: string | null; isPrivate?: boolean } = {};
+  if (validated.data.name !== undefined) patch.name = validated.data.name;
+  // description: only when the client sent the key (allows clearing to null).
+  if ("description" in rawBody) patch.description = validated.data.description ?? null;
+  // isPrivate: only when the client sent the key (see default() note above).
+  if ("isPrivate" in rawBody && validated.data.isPrivate !== undefined) {
+    patch.isPrivate = validated.data.isPrivate;
+  }
+  const result = await updateCommunity(
+    db,
+    id,
+    user.id,
+    patch,
+    user.role === "admin"
+  );
+  if (!result.ok) {
+    if (result.reason === "forbidden") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    return NextResponse.json({ error: "Invalid community data" }, { status: 400 });
   }
 
-  return NextResponse.json({ community: updated });
+  // Moderators may edit details, but role elevation stays owner-only inside updateCommunity.
+  const payload = await communityPayload(db, id, user.id);
+  return NextResponse.json({ community: payload });
 }
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function DELETE(_request: Request, { params }: Params) {
   const { id } = await params;
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  const { data: community } = await supabase
-    .from("communities")
-    .select("owner_id")
-    .eq("id", id)
-    .single();
-
+  const community = await col<CommunityDoc>(db, "communities").findOne({
+    _id: toObjectId(id),
+  } as never);
   if (!community) {
     return NextResponse.json({ error: "Community not found" }, { status: 404 });
   }
 
-  if (community.owner_id !== user.id) {
-    const isAdmin = await supabase
-      .from("user_roles")
-      .select("role:roles!inner(name)")
-      .eq("user_id", user.id)
-      .eq("roles.name", "admin")
-      .then(({ data }) => (data?.length ?? 0) > 0);
-
-    if (!isAdmin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+  if (!community.ownerId.equals(toObjectId(user.id)) && user.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { error } = await supabase
-    .from("communities")
-    .delete()
-    .eq("id", id);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
+  const cid = toObjectId(id);
+  await Promise.all([
+    col(db, "communities").deleteOne({ _id: cid } as never),
+    col(db, "communityMembers").deleteMany({ communityId: cid } as never),
+    col(db, "communityPosts").deleteMany({ communityId: cid } as never),
+  ]);
   return NextResponse.json({ success: true });
 }

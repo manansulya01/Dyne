@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { getDb } from "@/lib/mongo/client";
+import { getSessionUser } from "@/lib/auth/session";
 import { AdminPageClient } from "./AdminPageClient";
 
 export const metadata: Metadata = {
@@ -9,18 +10,11 @@ export const metadata: Metadata = {
 };
 
 export default async function AdminPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  const user = await getSessionUser(db);
 
   if (!user) redirect("/login");
-
-  const { data: roles } = await supabase
-    .from("user_roles")
-    .select("role:roles!inner(name)")
-    .eq("user_id", user.id)
-    .eq("roles.name", "admin");
-
-  if (!roles || roles.length === 0) redirect("/feed");
+  if (user.role !== "admin") redirect("/feed");
 
   return <AdminPageClient />;
 }

@@ -1,25 +1,22 @@
-import { getUser } from "@/lib/auth/server";
-import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { requireAuth, getFullUser } from "@/lib/auth/server";
+import { toProfileJSON } from "@/lib/db/contracts";
 import { DashboardClientLayout } from "./DashboardClientLayout";
+
+// All dashboard routes are session-dependent: never prerender at build time.
+export const dynamic = "force-dynamic";
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const user = await getUser();
+  const user = await requireAuth();
+  const full = await getFullUser(user.id);
 
-  if (!user) {
+  if (!full) {
     redirect("/login");
   }
 
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
-
-  return <DashboardClientLayout profile={data}>{children}</DashboardClientLayout>;
+  return <DashboardClientLayout profile={toProfileJSON(full as unknown as Record<string, unknown>)}>{children}</DashboardClientLayout>;
 }

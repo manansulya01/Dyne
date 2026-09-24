@@ -1,68 +1,67 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { z } from "zod";
+import type { ObjectId } from "mongodb";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col } from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
+import { followUser, unfollowUser } from "@/lib/db/users";
+import { resolveAuthors } from "@/lib/db/authors";
+import { createNotification } from "@/lib/db/notifications";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { parseLimitParam } from "@/lib/utils";
+
+const targetSchema = z.object({ targetUserId: objectIdSchema });
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let user;
+  try {
+    user = await requireSessionUser(db);
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
-  const body = await request.json();
-  const { targetUserId } = body;
-
-  if (!targetUserId) {
+  const body = await request.json().catch(() => null);
+  const validated = targetSchema.safeParse(body);
+  if (!validated.success) {
     return NextResponse.json({ error: "Target user ID required" }, { status: 400 });
   }
 
-  if (targetUserId === user.id) {
-    return NextResponse.json({ error: "Cannot follow yourself" }, { status: 400 });
-  }
-
-  const { data: targetProfile } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("id", targetUserId)
-    .single();
-
-  if (!targetProfile) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
-  }
-
-  const { error } = await supabase
-    .from("follows")
-    .insert({
-      follower_id: user.id,
-      following_id: targetUserId,
-    });
-
-  if (error) {
-    if (error.code === "23505") {
-      return NextResponse.json({ error: "Already following" }, { status: 400 });
+  const result = await followUser(db, user.id, validated.data.targetUserId);
+  if (!result.ok) {
+    if (result.reason === "self") {
+      return NextResponse.json({ error: "Cannot follow yourself" }, { status: 400 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    if (result.reason === "not_found") {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+    return NextResponse.json({ error: "Already following" }, { status: 400 });
   }
 
-  await supabase
-    .from("notifications")
-    .insert({
-      recipient_id: targetUserId,
-      actor_id: user.id,
-      type: "follow",
-      title: "New follower",
-      message: "started following you",
-    });
+  await createNotification(db, {
+    recipientId: validated.data.targetUserId,
+    actorId: user.id,
+    type: "follow",
+    title: "New follower",
+    message: "started following you",
+  });
 
   return NextResponse.json({ success: true });
 }
 
 export async function DELETE(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let user;
+  try {
+    user = await requireSessionUser(db);
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
   const { searchParams } = new URL(request.url);
@@ -78,64 +77,58 @@ export async function DELETE(request: Request) {
     }
   }
 
-  if (!targetUserId) {
+  if (!targetUserId || !objectIdSchema.safeParse(targetUserId).success) {
     return NextResponse.json({ error: "Target user ID required" }, { status: 400 });
   }
 
-  const { error } = await supabase
-    .from("follows")
-    .delete()
-    .eq("follower_id", user.id)
-    .eq("following_id", targetUserId);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
+  await unfollowUser(db, user.id, targetUserId);
   return NextResponse.json({ success: true });
 }
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const db = await getDb();
+  await ensureIndexes(db);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let user;
+  try {
+    user = await requireSessionUser(db);
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return NextResponse.json({ error: message }, { status });
   }
 
   const { searchParams } = new URL(request.url);
-  const userId = searchParams.get("userId") || user.id;
+  const rawId = searchParams.get("userId") || user.id;
+  if (!objectIdSchema.safeParse(rawId).success) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
   const type = searchParams.get("type") || "followers";
+  if (type !== "followers" && type !== "following") {
+    return NextResponse.json({ error: "Invalid type (followers|following)" }, { status: 400 });
+  }
   const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
-  let query = supabase
-    .from("follows")
-    .select(`
-      *,
-      follower:profiles!follows_follower_id_fkey(id, username, display_name, avatar_url),
-      following:profiles!follows_following_id_fkey(id, username, display_name, avatar_url)
-    `)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (type === "followers") {
-    query = query.eq("following_id", userId);
-  } else {
-    query = query.eq("follower_id", userId);
-  }
-
+  const field = type === "followers" ? "followingId" : "followerId";
+  const query: Record<string, unknown> = { [field]: toObjectId(rawId) };
   if (cursor) {
-    query = query.lt("created_at", cursor);
+    const parsed = new Date(cursor);
+    if (!isNaN(+parsed)) query.createdAt = { $lt: parsed };
   }
 
-  const { data: follows, error } = await query;
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  const profiles = follows?.map(f => type === "followers" ? f.follower : f.following).filter(Boolean) || [];
+  const rows = await col(db, "follows")
+    .find(query as never)
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+  const otherField = type === "followers" ? "followerId" : "followingId";
+  const authors = await resolveAuthors(
+    db,
+    rows.map((r) => r[otherField] as ObjectId)
+  );
+  const profiles = rows
+    .map((r) => authors.get((r[otherField] as ObjectId).toHexString()) ?? null)
+    .filter(Boolean);
 
   return NextResponse.json({ profiles });
 }

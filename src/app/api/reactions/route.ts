@@ -1,22 +1,37 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes, col, type ReactionDoc } from "@/lib/mongo/collections";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
+import { addReaction, removeReaction } from "@/lib/db/reactions";
+import { resolveAuthors } from "@/lib/db/authors";
+import { createNotification } from "@/lib/db/notifications";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 
 const reactionBodySchema = z.object({
   targetType: z.enum(["post", "comment", "video"]),
-  targetId: z.string().uuid(),
-  reactionType: z.string().min(1).max(30).default("like"),
+  targetId: objectIdSchema,
+  reactionType: z.enum(["like"]).default("like"),
 });
 
-export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+async function authed() {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
   }
+}
 
-  const body = await request.json();
+export async function POST(request: Request) {
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
+
+  const body = await request.json().catch(() => null);
   const validated = reactionBodySchema.safeParse(body);
 
   if (!validated.success) {
@@ -27,51 +42,25 @@ export async function POST(request: Request) {
   }
 
   const { targetType, targetId, reactionType } = validated.data;
-
-  const { data: existing } = await supabase
-    .from("reactions")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("target_type", targetType)
-    .eq("target_id", targetId)
-    .eq("reaction_type", reactionType)
-    .single();
-
-  if (existing) {
+  const added = await addReaction(db, user.id, targetType, targetId, reactionType);
+  if (!added.ok) {
+    if (added.reason === "not_found") {
+      return NextResponse.json({ error: "Target not found" }, { status: 404 });
+    }
     return NextResponse.json({ error: "Already reacted" }, { status: 400 });
   }
 
-  const { error } = await supabase
-    .from("reactions")
-    .insert({
-      user_id: user.id,
-      target_type: targetType,
-      target_id: targetId,
-      reaction_type: reactionType,
-    });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
   if (targetType === "post") {
-    const { data: post } = await supabase
-      .from("posts")
-      .select("author_id")
-      .eq("id", targetId)
-      .single();
-
-    if (post && post.author_id !== user.id) {
-      await supabase
-        .from("notifications")
-        .insert({
-          recipient_id: post.author_id,
-          actor_id: user.id,
-          type: "like",
-          title: "New like",
-          message: "liked your post",
-          data: { post_id: targetId },
-        });
+    const post = await col(db, "posts").findOne({ _id: toObjectId(targetId) } as never);
+    if (post && !post.authorId.equals(toObjectId(user.id))) {
+      await createNotification(db, {
+        recipientId: post.authorId,
+        actorId: user.id,
+        type: "like",
+        title: "New like",
+        message: "liked your post",
+        data: { post_id: targetId },
+      });
     }
   }
 
@@ -79,80 +68,78 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
   const { searchParams } = new URL(request.url);
   const targetType = searchParams.get("targetType");
   const targetId = searchParams.get("targetId");
   const reactionType = searchParams.get("reactionType") || "like";
 
-  if (!targetType || !targetId) {
+  if (
+    !targetType ||
+    !["post", "comment", "video"].includes(targetType) ||
+    !targetId ||
+    !objectIdSchema.safeParse(targetId).success
+  ) {
     return NextResponse.json({ error: "Target type and ID required" }, { status: 400 });
   }
 
-  const { error } = await supabase
-    .from("reactions")
-    .delete()
-    .eq("user_id", user.id)
-    .eq("target_type", targetType)
-    .eq("target_id", targetId)
-    .eq("reaction_type", reactionType);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
+  await removeReaction(
+    db,
+    user.id,
+    targetType as "post" | "comment" | "video",
+    targetId,
+    reactionType
+  );
   return NextResponse.json({ success: true });
 }
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
   const { searchParams } = new URL(request.url);
   const targetType = searchParams.get("targetType");
   const targetId = searchParams.get("targetId");
 
-  if (!targetType || !targetId) {
+  if (
+    !targetType ||
+    !["post", "comment", "video"].includes(targetType) ||
+    !targetId ||
+    !objectIdSchema.safeParse(targetId).success
+  ) {
     return NextResponse.json({ error: "Target type and ID required" }, { status: 400 });
   }
 
-  const { data: reactions, error } = await supabase
-    .from("reactions")
-    .select("*, user:profiles!reactions_user_id_fkey(id, username, display_name, avatar_url)")
-    .eq("target_type", targetType)
-    .eq("target_id", targetId)
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const rows = await col<ReactionDoc>(db, "reactions")
+    .find({ targetType, targetId: toObjectId(targetId) } as never)
+    .sort({ createdAt: -1 })
+    .limit(200)
+    .toArray();
+  const authors = await resolveAuthors(
+    db,
+    rows.map((r) => r.userId)
+  );
+  const reactions = rows.map((r) => ({
+    id: r._id.toHexString(),
+    user_id: r.userId.toHexString(),
+    target_type: r.targetType,
+    target_id: r.targetId.toHexString(),
+    reaction_type: r.kind,
+    created_at: r.createdAt,
+    user: authors.get(r.userId.toHexString()) ?? null,
+  }));
+  const counts: Record<string, number> = {};
+  let userReaction: string | null = null;
+  for (const r of rows) {
+    counts[r.kind] = (counts[r.kind] || 0) + 1;
+    if (userReaction === null && r.userId.equals(toObjectId(user.id))) {
+      userReaction = r.kind;
+    }
   }
 
-  const { data: userReaction } = await supabase
-    .from("reactions")
-    .select("reaction_type")
-    .eq("user_id", user.id)
-    .eq("target_type", targetType)
-    .eq("target_id", targetId)
-    .single();
-
-  const counts = reactions?.reduce((acc, r) => {
-    acc[r.reaction_type] = (acc[r.reaction_type] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>) || {};
-
-  return NextResponse.json({
-    reactions,
-    counts,
-    userReaction: userReaction?.reaction_type || null,
-  });
+  return NextResponse.json({ reactions, counts, userReaction });
 }

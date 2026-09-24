@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { updatePasswordSchema, type UpdatePasswordInput } from "@/lib/validation";
@@ -13,6 +13,8 @@ import Link from "next/link";
 
 export default function ResetPasswordForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const token = searchParams.get("token");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -24,16 +26,28 @@ export default function ResetPasswordForm() {
     setIsLoading(true);
     setError(null);
 
-    const formData = new FormData();
-    formData.append("password", data.password);
-    formData.append("confirmPassword", data.confirmPassword);
+    // Token flow (forgot-password email link) vs session flow (signed in).
+    const response = token
+      ? await fetch("/api/auth/reset-confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token,
+            password: data.password,
+            confirmPassword: data.confirmPassword,
+          }),
+        })
+      : await fetch("/api/auth/update-password", {
+          method: "POST",
+          body: (() => {
+            const formData = new FormData();
+            formData.append("password", data.password);
+            formData.append("confirmPassword", data.confirmPassword);
+            return formData;
+          })(),
+        });
 
-    const response = await fetch("/api/auth/update-password", {
-      method: "POST",
-      body: formData,
-    });
-
-    const result = await response.json();
+    const result = await response.json().catch(() => null);
 
     if (result.error) {
       if (result.error._form) {

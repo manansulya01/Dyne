@@ -1,30 +1,36 @@
-import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getDb } from "@/lib/mongo/client";
+import { ensureIndexes } from "@/lib/mongo/collections";
 import { reportCreateSchema } from "@/lib/validation";
+import { createReport, listReports } from "@/lib/db/reports";
+import { toReportJSON } from "@/lib/db/contracts";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { parseLimitParam } from "@/lib/utils";
+import type { ReportStatus } from "@/lib/mongo/collections";
 
-async function getModeratorRole(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
-  const { data } = await supabase
-    .from("user_roles")
-    .select("role:roles!inner(name)")
-    .eq("user_id", userId)
-    .in("roles.name", ["admin", "teacher", "staff"]);
-  return (data?.length ?? 0) > 0;
+async function authed() {
+  const db = await getDb();
+  await ensureIndexes(db);
+  try {
+    const user = await requireSessionUser(db);
+    return { db, user };
+  } catch (err) {
+    const { status, message } = toHttpError(err);
+    return { db, error: NextResponse.json({ error: message }, { status }) };
+  }
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
   const validated = reportCreateSchema.safeParse({
-    targetType: body.targetType,
-    targetId: body.targetId,
-    reason: body.reason,
-    description: body.description,
+    targetType: body?.targetType,
+    targetId: body?.targetId,
+    reason: body?.reason,
+    description: body?.description,
   });
 
   if (!validated.success) {
@@ -34,57 +40,45 @@ export async function POST(request: Request) {
     );
   }
 
-  const { error } = await supabase.from("reports").insert({
-    reporter_id: user.id,
-    target_type: validated.data.targetType,
-    target_id: validated.data.targetId,
+  const created = await createReport(db, user.id, {
+    targetType: validated.data.targetType,
+    targetId: validated.data.targetId,
     reason: validated.data.reason,
-    description: validated.data.description ?? null,
-    status: "pending",
+    description: validated.data.description,
   });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!created.ok) {
+    if (created.reason === "not_found") {
+      return NextResponse.json({ error: "Reported content not found" }, { status: 404 });
+    }
+    return NextResponse.json({ error: "Reason is required" }, { status: 400 });
   }
-
   return NextResponse.json({ success: true });
 }
 
 export async function GET(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const ctx = await authed();
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
 
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status");
   const cursor = searchParams.get("cursor");
-  const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
-
-  const isModerator = await getModeratorRole(supabase, user.id);
-
-  let query = supabase
-    .from("reports")
-    .select(`
-      *,
-      reporter:profiles!reports_reporter_id_fkey(id, username, display_name, avatar_url)
-    `)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  // Ordinary users see only their own reports; moderators see everything.
-  if (!isModerator) {
-    query = query.eq("reporter_id", user.id);
-  }
-  if (status) query = query.eq("status", status);
-  if (cursor) query = query.lt("created_at", cursor);
-
-  const { data: reports, error } = await query;
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
+  let before: Date | undefined;
+  if (cursor) {
+    const parsed = new Date(cursor);
+    if (!isNaN(+parsed)) before = parsed;
   }
 
-  return NextResponse.json({ reports: reports ?? [], isModerator });
+  const validStatus: ReportStatus[] = ["pending", "reviewing", "resolved", "dismissed"];
+  const { reports, isModerator } = await listReports(db, user.id, user.role, {
+    status: status && (validStatus as string[]).includes(status) ? (status as ReportStatus) : undefined,
+    limit,
+    before,
+  });
+
+  return NextResponse.json({
+    reports: reports.map((r) => toReportJSON(r as unknown as Record<string, unknown>)),
+    isModerator,
+  });
 }

@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import { PeoplePageClient } from "./PeoplePageClient";
-import { createClient } from "@/lib/supabase/server";
+import { getDb } from "@/lib/mongo/client";
+import { getSessionUser } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
   title: "People - Dyne",
@@ -8,18 +9,7 @@ export const metadata: Metadata = {
 };
 
 export default async function PeoplePage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    return <PeoplePageClient currentUserId={null} />;
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id")
-    .eq("id", user.id)
-    .single();
-
-  return <PeoplePageClient currentUserId={profile?.id || null} />;
+  const db = await getDb();
+  const user = await getSessionUser(db);
+  return <PeoplePageClient currentUserId={user?.id || null} />;
 }
