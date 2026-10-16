@@ -5,8 +5,7 @@ import { blogCreateSchema } from "@/lib/validation";
 import { createBlog, listBlogs } from "@/lib/db/content";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 import { parseLimitParam } from "@/lib/utils";
-
-const CAN_PUBLISH = new Set(["admin", "teacher", "staff", "club"]);
+import { withAnyPermission } from "@/lib/security/authorize";
 
 export async function GET(request: Request) {
   const db = await getDb();
@@ -34,16 +33,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const db = await getDb();
   await ensureIndexes(db);
-  let user;
-  try {
-    user = await requireSessionUser(db);
-  } catch (err) {
-    const { status, message } = toHttpError(err);
-    return NextResponse.json({ error: message }, { status });
-  }
-  if (!CAN_PUBLISH.has(user.role)) {
-    return NextResponse.json({ error: "Only staff, teachers, clubs, and admins can publish blogs" }, { status: 403 });
-  }
+  // Publishing blogs is a staff/teacher/admin capability, enforced centrally.
+  const auth = await withAnyPermission(["blogs.create"]);
+  if (!auth.ok) return auth.response;
+  const { user } = auth.ctx;
+
   const body = await request.json().catch(() => null);
   const validated = blogCreateSchema.safeParse(body);
   if (!validated.success) {
@@ -51,7 +45,8 @@ export async function POST(request: Request) {
   }
   const created = await createBlog(db, user.id, validated.data);
   if (!created.ok) return NextResponse.json({ error: "Slug already taken" }, { status: 409 });
-  const blogs = await listBlogs(db, { limit: 1, includeDrafts: true });
-  const blog = blogs.find((b) => String((b as Record<string, unknown>).id) === created.blogId.toHexString()) ?? null;
-  return NextResponse.json({ blog }, { status: 201 });
+  return NextResponse.json(
+    { blog: { id: created.blogId.toHexString() }, moderationStatus: created.moderationStatus },
+    { status: 201 }
+  );
 }

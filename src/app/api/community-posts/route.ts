@@ -6,6 +6,7 @@ import { postCreateSchema } from "@/lib/validation";
 import { createCommunityPost, listCommunityPosts, memberRole } from "@/lib/db/communities";
 import { toCommunityPostJSON } from "@/lib/db/contracts";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { readFormData } from "@/lib/utils";
 
 export async function POST(request: Request) {
   const db = await getDb();
@@ -19,7 +20,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status });
   }
 
-  const formData = await request.formData();
+  const formData = await readFormData(request);
+  if (!formData) {
+    return NextResponse.json({ error: "Invalid request format" }, { status: 400 });
+  }
   const content = formData.get("content") as string;
   const communityId = formData.get("communityId") as string;
 

@@ -63,11 +63,12 @@ describe("mongo client + collections", () => {
     const db = await getDb();
     const authorId = new ObjectId();
     const post = await col(db, "posts").insertOne({
-      authorId, content: "hello", media: [],
+      authorId, content: "hello", media: [], post_type: "post",
       createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
     } as never);
     const found = await col(db, "posts").findOne({ _id: post.insertedId } as never);
     expect(found?.authorId.equals(authorId)).toBe(true);
+    expect(found?.post_type).toBe("post");
   });
 
   it("resets the cached client on demand", async () => {

@@ -47,7 +47,10 @@ export function LoginForm() {
       }
 
       router.refresh();
-      router.push("/feed");
+      // Flagged accounts are sent straight to the forced rotation screen.
+      router.push(
+        typeof result.redirectTo === "string" ? result.redirectTo : "/feed"
+      );
     } catch {
       setError("Network error. Please try again.");
     } finally {

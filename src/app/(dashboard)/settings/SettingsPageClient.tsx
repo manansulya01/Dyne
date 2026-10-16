@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/Avatar";
+import { PROFILE_TAGS } from "@/lib/constants/profileTags";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { PreferenceSettings } from "./PreferenceSettings";
 
@@ -19,6 +20,7 @@ interface SettingsProfile {
   class_grade: string | null;
   house: string | null;
   interests: string[];
+  profile_tags?: string[];
 }
 
 export function SettingsPageClient({ profile, email }: {
@@ -31,6 +33,7 @@ export function SettingsPageClient({ profile, email }: {
   const [classGrade, setClassGrade] = useState(profile?.class_grade ?? "");
   const [house, setHouse] = useState(profile?.house ?? "");
   const [interests, setInterests] = useState((profile?.interests ?? []).join(", "));
+  const [tags, setTags] = useState<string[]>(profile?.profile_tags ?? []);
   const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url ?? "");
   const [coverUrl, setCoverUrl] = useState((profile as unknown as Record<string, string | null> | null)?.cover_image_url ?? "");
   const [isSaving, setIsSaving] = useState(false);
@@ -77,6 +80,7 @@ export function SettingsPageClient({ profile, email }: {
           classGrade: classGrade.trim() || undefined,
           house: house.trim() || undefined,
           interests: interests.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 10),
+          profileTags: tags,
           coverImageUrl: coverUrl.trim() || undefined,
         }),
       });
@@ -214,6 +218,34 @@ export function SettingsPageClient({ profile, email }: {
             <div>
               <label htmlFor="interests" className="text-sm font-medium">Interests (comma-separated, max 10)</label>
               <Input id="interests" value={interests} onChange={(e) => setInterests(e.target.value)} placeholder="football, robotics, music" className="min-h-[44px]" />
+            </div>
+            <div>
+              <span id="tags-label" className="text-sm font-medium">Profile tags (pick up to 8)</span>
+              <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-labelledby="tags-label">
+                {PROFILE_TAGS.map((t) => {
+                  const active = tags.includes(t);
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() =>
+                        setTags((prev) =>
+                          prev.includes(t) ? prev.filter((x) => x !== t) : prev.length >= 8 ? prev : [...prev, t]
+                        )
+                      }
+                      className={`min-h-[44px] rounded-lg border px-2.5 text-xs font-semibold tracking-wide transition-colors ${
+                        active
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+                      }`}
+                    >
+                      #{t}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{tags.length}/8 selected — shown on your profile and in discovery.</p>
             </div>
             <div>
               <label htmlFor="cover-url" className="text-sm font-medium">Cover image URL (optional)</label>

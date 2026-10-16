@@ -7,7 +7,8 @@ import { cancelRsvp, rsvpEvent } from "@/lib/db/events";
 import { resolveAuthors } from "@/lib/db/authors";
 import { createNotification } from "@/lib/db/notifications";
 import { parseLimitParam } from "@/lib/utils";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session"
+import { isAdminRole } from "@/lib/permissions";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -48,7 +49,7 @@ export async function GET(request: Request, { params }: Params) {
   if (!event) {
     return NextResponse.json({ error: "Event not found" }, { status: 404 });
   }
-  if (!event.isPublic && !event.organizerId.equals(toObjectId(user.id)) && user.role !== "admin") {
+  if (!event.isPublic && !event.organizerId.equals(toObjectId(user.id)) && !isAdminRole(user.role)) {
     const attendee = await col<EventAttendeeDoc>(db, "eventAttendees").findOne({
       eventId: event._id,
       userId: toObjectId(user.id),

@@ -7,7 +7,9 @@ import { createPost, deleteOwnPost, getPost, listPosts, removePost } from "@/lib
 import { findUserByUsername } from "@/lib/db/users";
 import { toPostJSON } from "@/lib/db/contracts";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
-import { parseLimitParam } from "@/lib/utils";
+import { hasPermission } from "@/lib/permissions";
+import { rateLimit, clientKey, RATE_PRESETS } from "@/lib/security/rateLimit";
+import { parseLimitParam, readFormData } from "@/lib/utils";
 
 async function authed() {
   const db = await getDb();
@@ -68,7 +70,15 @@ export async function POST(request: Request) {
   if ("error" in ctx) return ctx.error;
   const { db, user } = ctx;
 
-  const formData = await request.formData();
+  const rl = rateLimit(`posts:${clientKey(request, user.id)}`, RATE_PRESETS.posts.limit, RATE_PRESETS.posts.windowMs);
+  if (!rl.ok) {
+    return NextResponse.json({ error: "Too many requests. Please try again later." }, { status: 429 });
+  }
+
+  const formData = await readFormData(request);
+  if (!formData) {
+    return NextResponse.json({ error: "Invalid request format" }, { status: 400 });
+  }
   const content = formData.get("content") as string;
   const mediaIds = formData.getAll("mediaIds") as string[];
 
@@ -95,7 +105,7 @@ export async function POST(request: Request) {
   }
 
   // Claim staged uploads (ownership verified: only the uploader's rows).
-  const media: Array<{ url: string; mediaType: "image" | "video"; thumbnailUrl: string | null; orderIndex: number }> = [];
+  const media: Array<{ url: string; mediaType: "image" | "video" | "file"; thumbnailUrl: string | null; orderIndex: number }> = [];
   if (validated.data.mediaIds && validated.data.mediaIds.length > 0) {
     for (const [index, rawId] of validated.data.mediaIds.entries()) {
       if (!objectIdSchema.safeParse(rawId).success) continue;
@@ -142,11 +152,11 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Post ID required" }, { status: 400 });
   }
 
-  // Owner path first; admins may remove anything.
+  // Owner path first; roles with posts.remove may remove anything.
   if (await deleteOwnPost(db, postId, user.id)) {
     return NextResponse.json({ success: true });
   }
-  if (user.role === "admin" && (await removePost(db, postId))) {
+  if (hasPermission(user.role, "posts.remove") && (await removePost(db, postId))) {
     return NextResponse.json({ success: true });
   }
 

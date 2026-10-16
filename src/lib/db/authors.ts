@@ -7,6 +7,7 @@ export interface AuthorShape {
   username: string;
   displayName: string | null;
   avatarUrl: string | null;
+  profileTags?: string[];
 }
 
 /** Batch-resolve author ids to public shapes in a single query. */
@@ -15,7 +16,7 @@ export async function resolveAuthors(db: Db, ids: ObjectId[]): Promise<Map<strin
   if (unique.length === 0) return new Map();
   const rows = await col<UserDoc>(db, "users")
     .find({ _id: { $in: unique } } as never)
-    .project({ username: 1, displayName: 1, avatarUrl: 1 })
+    .project({ username: 1, displayName: 1, avatarUrl: 1, profileTags: 1 })
     .toArray();
   return new Map(
     rows.map((u) => [
@@ -25,6 +26,7 @@ export async function resolveAuthors(db: Db, ids: ObjectId[]): Promise<Map<strin
         username: u.username,
         displayName: u.displayName,
         avatarUrl: u.avatarUrl,
+        profileTags: (u.profileTags ?? []) as string[],
       },
     ])
   );

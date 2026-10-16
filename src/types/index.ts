@@ -1,3 +1,18 @@
+/**
+ * Shared frontend-facing types.
+ *
+ * NOTE (cleanup): this file previously carried a full set of legacy
+ * Supabase-era table types (Role, UserRoleAssignment, Community,
+ * Conversation, Message, Event, Video, Notification, Report, …). None of
+ * them were imported anywhere — the MongoDB domain model lives in
+ * `src/lib/mongo/collections.ts` and API shapes come from
+ * `src/lib/db/contracts.ts`. The dead types were removed so future code
+ * cannot accidentally depend on stale shapes (e.g. a 5-role UserRole or
+ * legacy lowercase report statuses).
+ *
+ * Only the post types below are imported by UI code (feed + saved).
+ */
+
 export interface Profile {
   id: string;
   username: string;
@@ -13,26 +28,28 @@ export interface Profile {
   last_active_at: string | null;
 }
 
-export type UserRole = "student" | "teacher" | "staff" | "club" | "admin";
+export type UserRole =
+  | "student"
+  | "teacher"
+  | "staff"
+  | "club"
+  | "moderator"
+  | "admin"
+  | "super_admin";
 
-export interface Role {
-  id: string;
-  name: UserRole;
-  description: string | null;
-  created_at: string;
-}
-
-export interface UserRoleAssignment {
-  id: string;
-  user_id: string;
-  role_id: string;
-  created_at: string;
-}
+export type PostType =
+  | "post"
+  | "blog"
+  | "story"
+  | "announcement"
+  | "assignment"
+  | "exam";
 
 export interface Post {
   id: string;
   author_id: string;
   content: string | null;
+  post_type: PostType;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -48,226 +65,126 @@ export interface PostWithRelations extends Post {
 export interface PostMedia {
   id: string;
   post_id: string;
-  media_type: "image" | "video";
+  media_type: "image" | "video" | "file";
   url: string;
   thumbnail_url: string | null;
   order_index: number;
   created_at: string;
 }
 
-export interface Comment {
-  id: string;
-  post_id: string;
-  author_id: string;
-  content: string;
-  parent_comment_id: string | null;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-}
+/* Academic / productivity API shapes (mirror `src/lib/db/contracts.ts`). */
 
-export interface Reaction {
+export interface CourseBrief {
   id: string;
-  user_id: string;
-  target_type: "post" | "comment" | "video";
-  target_id: string;
-  reaction_type: string;
-  created_at: string;
-}
-
-export interface Follow {
-  id: string;
-  follower_id: string;
-  following_id: string;
-  created_at: string;
-}
-
-export interface SavedPost {
-  id: string;
-  user_id: string;
-  post_id: string;
-  created_at: string;
-}
-
-export interface Community {
-  id: string;
-  slug: string;
   name: string;
-  description: string | null;
-  image_url: string | null;
-  owner_id: string;
-  is_private: boolean;
-  created_at: string;
-  updated_at: string;
+  color: string;
 }
 
-export interface CommunityMember {
-  id: string;
-  community_id: string;
-  user_id: string;
-  role: "owner" | "moderator" | "member";
-  joined_at: string;
-}
-
-export interface CommunityPost {
-  id: string;
-  community_id: string;
-  author_id: string;
-  content: string | null;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-}
-
-export interface Conversation {
-  id: string;
-  type: "direct" | "group";
-  name: string | null;
-  image_url: string | null;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ConversationMember {
-  id: string;
-  conversation_id: string;
-  user_id: string;
-  joined_at: string;
-  last_read_at: string | null;
-}
-
-export interface Message {
-  id: string;
-  conversation_id: string;
-  sender_id: string;
-  content: string | null;
-  created_at: string;
-  updated_at: string;
-  deleted_at: string | null;
-}
-
-export interface MessageAttachment {
-  id: string;
-  message_id: string;
-  file_url: string;
-  file_type: string;
-  file_name: string;
-  file_size: number;
-  created_at: string;
-}
-
-export interface Event {
+export interface TaskJSON {
   id: string;
   title: string;
   description: string | null;
-  image_url: string | null;
-  location_id: string | null;
-  start_time: string;
-  end_time: string;
-  organizer_id: string;
-  is_public: boolean;
-  max_attendees: number | null;
+  priority: "low" | "medium" | "high" | "urgent";
+  due_date: string | null;
+  course_id: string | null;
+  course: CourseBrief | null;
+  tags: string[];
+  completed_at: string | null;
   created_at: string;
-  updated_at: string;
+  updated_at?: string;
 }
 
-export interface EventAttendee {
-  id: string;
-  event_id: string;
-  user_id: string;
-  status: "going" | "interested" | "declined";
-  created_at: string;
-}
-
-export interface CampusBuilding {
-  id: string;
-  name: string;
-  description: string | null;
-  image_url: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  floor_count: number | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Club {
-  id: string;
-  name: string;
-  description: string | null;
-  image_url: string | null;
-  category: string | null;
-  is_official: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Video {
+export interface AssignmentJSON {
   id: string;
   title: string;
   description: string | null;
-  video_url: string;
-  thumbnail_url: string | null;
-  creator_id: string;
-  duration: number | null;
-  view_count: number;
-  category: string | null;
-  is_processed: boolean;
+  course_id: string | null;
+  course: CourseBrief | null;
+  due_date: string | null;
+  priority: TaskJSON["priority"];
+  status: "not_started" | "in_progress" | "submitted" | "completed";
+  progress: number;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface CourseJSON {
+  id: string;
+  name: string;
+  code: string | null;
+  instructor: string | null;
+  color: string;
+  room: string | null;
+  description: string | null;
+  semester: string | null;
+  schedule: Array<{ dayOfWeek: number; startTime: string; endTime: string }>;
+  counts: {
+    open_tasks: number;
+    open_assignments: number;
+    upcoming_exams: number;
+    notes: number;
+  } | null;
+  created_at: string;
+}
+
+export interface ExamJSON {
+  id: string;
+  title: string;
+  course_id: string | null;
+  course: CourseBrief | null;
+  date: string;
+  end_time: string | null;
+  location: string | null;
+  topics: string[];
+  preparation: number;
+  notes: string | null;
+  status: "scheduled" | "completed" | "cancelled";
+  created_at: string;
+}
+
+export interface NoteJSON {
+  id: string;
+  title: string;
+  body: string;
+  course_id: string | null;
+  course: CourseBrief | null;
+  tags: string[];
   created_at: string;
   updated_at: string;
 }
 
-export interface VideoView {
+export interface GoalJSON {
   id: string;
-  video_id: string;
-  user_id: string | null;
-  watched_duration: number;
-  created_at: string;
-}
-
-export interface Notification {
-  id: string;
-  recipient_id: string;
-  actor_id: string | null;
-  type: NotificationType;
   title: string;
-  message: string | null;
-  data: Record<string, unknown> | null;
-  read_at: string | null;
-  created_at: string;
-}
-
-export type NotificationType =
-  | "follow"
-  | "like"
-  | "comment"
-  | "mention"
-  | "community_join"
-  | "message"
-  | "event_reminder"
-  | "moderation_action"
-  | "event_rsvp";
-
-export interface Report {
-  id: string;
-  reporter_id: string;
-  target_type: "post" | "comment" | "user" | "community" | "video";
-  target_id: string;
-  reason: string;
   description: string | null;
-  status: "pending" | "reviewing" | "resolved" | "dismissed";
-  reviewed_by: string | null;
-  reviewed_at: string | null;
+  target: number;
+  current: number;
+  unit: string;
+  deadline: string | null;
+  status: "active" | "completed" | "archived";
   created_at: string;
 }
 
-export interface ModerationAction {
+export interface HabitJSON {
   id: string;
-  moderator_id: string;
-  target_type: "post" | "comment" | "user" | "community" | "video";
-  target_id: string;
-  action: "warning" | "content_removal" | "temp_ban" | "perm_ban" | "dismiss";
-  reason: string | null;
+  name: string;
+  frequency: "daily" | "weekly";
+  target: number;
+  is_active: boolean;
+  today_count: number;
+  streak: number;
+  created_at: string;
+}
+
+export interface StudySessionJSON {
+  id: string;
+  course_id: string | null;
+  course: CourseBrief | null;
+  subject: string | null;
+  note: string | null;
+  started_at: string;
+  ended_at: string | null;
+  status: "active" | "paused" | "completed" | "cancelled";
+  duration_seconds: number;
   created_at: string;
 }

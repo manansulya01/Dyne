@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CalendarClock, Megaphone, CalendarDays, Table2 } from "lucide-react";
 import Link from "next/link";
 import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
@@ -18,6 +19,7 @@ interface ScheduleData {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export function ScheduleClient() {
+  const router = useRouter();
   const [data, setData] = useState<ScheduleData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<"today" | "week" | "all">("today");
@@ -87,7 +89,7 @@ export function ScheduleClient() {
       <section aria-label="Today's classes" className="mt-6">
         <h2 className="mb-2 flex items-center gap-2 text-base font-bold"><Table2 className="h-5 w-5 text-primary" aria-hidden="true" /> Today · {DAYS[todayIdx]}</h2>
         {todayTable.length === 0 ? (
-          <div className="dyne-card"><EmptyState icon={Table2} title="No classes scheduled today" description="The timetable is empty for today. Admins and staff can add periods from the admin area." actionLabel="View timetable" onAction={() => (window.location.href = "/timetable")} /></div>
+          <div className="dyne-card"><EmptyState icon={Table2} title="No classes scheduled today" description="The timetable is empty for today. Admins and staff can add periods from the admin area." actionLabel="View timetable" onAction={() => router.push("/timetable")} /></div>
         ) : (
           <ol className="space-y-2">
             {todayTable.map((t) => (

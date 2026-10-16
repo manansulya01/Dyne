@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes, col } from "@/lib/mongo/collections";
-import { objectIdSchema } from "@/lib/mongo/ids";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { toHttpError } from "@/lib/auth/session";
 import { parseLimitParam } from "@/lib/utils";
 import { requireAdminUser } from "../stats/route";
@@ -92,7 +92,7 @@ export async function PATCH(request: Request) {
     if (updates.isPublic !== undefined) updateDoc.isPublic = updates.isPublic;
     if (updates.maxAttendees !== undefined) updateDoc.maxAttendees = updates.maxAttendees;
 
-    const res = await col(db, "events").updateOne({ _id: eventId } as never, { $set: updateDoc });
+    const res = await col(db, "events").updateOne({ _id: toObjectId(eventId) } as never, { $set: updateDoc });
     if (res.matchedCount === 0) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
     }
@@ -122,7 +122,7 @@ export async function DELETE(request: Request) {
   }
 
   const { eventId } = validated.data;
-  const res = await col(db, "events").deleteOne({ _id: eventId } as never);
+  const res = await col(db, "events").deleteOne({ _id: toObjectId(eventId) } as never);
   if (res.deletedCount === 0) {
     return NextResponse.json({ error: "Event not found" }, { status: 404 });
   }

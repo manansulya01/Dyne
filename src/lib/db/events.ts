@@ -11,7 +11,7 @@ import { resolveAuthors } from "./authors";
 import { serializeMany } from "./serialize";
 import { safeLimit } from "@/lib/utils";
 
-const CREATOR_ROLES: UserRole[] = ["admin", "teacher", "staff", "club"];
+const CREATOR_ROLES: UserRole[] = ["admin", "super_admin", "teacher", "staff", "club"];
 
 export function canCreateEvents(role: UserRole): boolean {
   return CREATOR_ROLES.includes(role);
@@ -77,7 +77,12 @@ export async function listEvents(
   db: Db,
   userId: string | ObjectId,
   limit = 50,
-  opts?: { cursor?: string | null; isAdmin?: boolean }
+  opts?: {
+    cursor?: string | null;
+    isAdmin?: boolean;
+    organizerId?: string | ObjectId;
+    attendeeId?: string | ObjectId;
+  }
 ) {
   const uid = toObjectId(userId);
   const clamped = safeLimit(limit, 50);
@@ -104,9 +109,21 @@ export async function listEvents(
     const parsed = new Date(opts.cursor);
     if (!isNaN(+parsed)) filter.startTime = { $gt: parsed };
   }
+  // Profile scoping (organized / attending). Visibility above still applies,
+  // so private events stay hidden from uninvolved viewers.
+  if (opts?.organizerId) {
+    filter.organizerId = toObjectId(opts.organizerId);
+  }
+  if (opts?.attendeeId) {
+    const rows = await col<EventAttendeeDoc>(db, "eventAttendees")
+      .find({ userId: toObjectId(opts.attendeeId) } as never)
+      .project({ eventId: 1 })
+      .toArray();
+    filter._id = { $in: rows.map((r) => r.eventId) };
+  }
   const rows = await col<EventDoc>(db, "events")
     .find(filter as never)
-    .sort({ startTime: 1 })
+    .sort({ startTime: 1, _id: 1 })
     .limit(clamped)
     .toArray();
   const ids = rows.map((e) => e._id);

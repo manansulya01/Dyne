@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Star, CalendarDays } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ListSkeleton } from "@/components/ui/Skeleton";
@@ -20,6 +21,7 @@ interface Ev {
 }
 
 export function MvaEventsClient() {
+  const router = useRouter();
   const [events, setEvents] = useState<Ev[]>([]);
   const [loading, setLoading] = useState(true);
   const [cat, setCat] = useState<string>("all");
@@ -60,7 +62,7 @@ export function MvaEventsClient() {
 
       {upcoming.length === 0 ? (
         <div className="dyne-card mt-4">
-          <EmptyState icon={CalendarDays} title="No upcoming MVA events yet" description="When organizers publish events, the next campus gathering will be featured here. Create one from the events page if you have something to share." actionLabel="Browse all events" onAction={() => (window.location.href = "/events")} />
+          <EmptyState icon={CalendarDays} title="No upcoming MVA events yet" description="When organizers publish events, the next campus gathering will be featured here. Create one from the events page if you have something to share." actionLabel="Browse all events" onAction={() => router.push("/events")} />
         </div>
       ) : (
         <>

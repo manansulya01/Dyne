@@ -16,7 +16,10 @@ export async function addReaction(
   const target = await col(db, targetCollection).findOne({
     _id: toObjectId(targetId),
   } as never);
-  if (!target) return { ok: false as const, reason: "not_found" as const };
+  // Soft-deleted targets behave as missing (no likes on removed content).
+  if (!target || (targetCollection !== "videos" && (target as { deletedAt?: unknown }).deletedAt)) {
+    return { ok: false as const, reason: "not_found" as const };
+  }
   try {
     await col<ReactionDoc>(db, "reactions").insertOne({
       userId: toObjectId(userId),
@@ -63,7 +66,9 @@ export async function toggleReaction(
   const targetCollection =
     targetType === "post" ? "posts" : targetType === "comment" ? "comments" : "videos";
   const target = await col(db, targetCollection).findOne({ _id: tid } as never);
-  if (!target) return { liked: false as const, missing: true as const };
+  if (!target || (targetCollection !== "videos" && (target as { deletedAt?: unknown }).deletedAt)) {
+    return { liked: false as const, missing: true as const };
+  }
   const existing = await col<ReactionDoc>(db, "reactions").findOne({
     userId: uid,
     targetType,

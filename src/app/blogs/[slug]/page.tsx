@@ -3,16 +3,28 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import LandingNav from "@/components/landing/LandingNav";
 import LandingFooter from "@/components/landing/LandingFooter";
-import { formatDate } from "@/lib/utils";
+import { formatDate, readingTime } from "@/lib/utils";
+import { getDb } from "@/lib/mongo/client";
+import { getBlogBySlug, listBlogs } from "@/lib/db/content";
 
 interface Props { params: Promise<{ slug: string }>; }
 
 async function fetchArticle(slug: string) {
-  const base = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  // Direct database read (see blogs/page.tsx): no self-HTTP-fetch.
+  // Public article pages show published articles only.
   try {
-    const res = await fetch(`${base}/api/blogs/${slug}`, { next: { revalidate: 60 } });
-    if (!res.ok) return null;
-    return await res.json();
+    const db = await getDb();
+    const blog = await getBlogBySlug(db, slug, false);
+    if (!blog) return null;
+    const related = (
+      await listBlogs(db, {
+        category: (blog as unknown as Record<string, string | null>).category ?? undefined,
+        limit: 4,
+      })
+    )
+      .filter((b) => (b as Record<string, unknown>).slug !== slug)
+      .slice(0, 3);
+    return { blog, related };
   } catch {
     return null;
   }
@@ -43,7 +55,7 @@ export default async function BlogArticlePage({ params }: Props) {
         <h1 className="mt-2 text-[clamp(1.9rem,5vw,3rem)] font-extrabold leading-tight tracking-tight">{String(b.title)}</h1>
         <p className="mt-3 text-sm text-zinc-400">
           By {String(author?.display_name ?? author?.displayName ?? author?.username ?? "MVA")}
-          {b.publishedAt ? ` · ${formatDate(String(b.publishedAt))}` : ""}
+          {b.publishedAt ? ` · ${formatDate(String(b.publishedAt))}` : ""} · {readingTime(typeof b.content === "string" ? b.content : "")}
         </p>
         {cover && (
           // eslint-disable-next-line @next/next/no-img-element

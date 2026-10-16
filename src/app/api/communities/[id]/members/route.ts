@@ -11,7 +11,8 @@ import { resolveAuthors } from "@/lib/db/authors";
 import { createNotification } from "@/lib/db/notifications";
 import { toMemberJSON } from "@/lib/db/contracts";
 import { parseLimitParam } from "@/lib/utils";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session"
+import { isAdminRole } from "@/lib/permissions";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -51,7 +52,7 @@ export async function GET(request: Request, { params }: Params) {
 
   const role = await memberRole(db, id, user.id);
   const isOwner = community.ownerId.equals(toObjectId(user.id));
-  if (!role && !isOwner && user.role !== "admin" && community.isPrivate) {
+  if (!role && !isOwner && !isAdminRole(user.role) && community.isPrivate) {
     return NextResponse.json({ error: "This community is private" }, { status: 403 });
   }
 
@@ -62,7 +63,7 @@ export async function GET(request: Request, { params }: Params) {
   }
   const rows = await col(db, "communityMembers")
     .find(filter as never)
-    .sort({ joinedAt: -1 })
+    .sort({ joinedAt: -1, _id: -1 })
     .limit(limit)
     .toArray();
   const authors = await resolveAuthors(
@@ -77,8 +78,13 @@ export async function GET(request: Request, { params }: Params) {
     } as unknown as Record<string, unknown>)
   );
 
+  // Real total so the UI can say "showing 20 of N" instead of implying the
+  // truncated page is the whole membership.
+  const total = await col(db, "communityMembers").countDocuments(filter as never);
+
   return NextResponse.json({
     members,
+    total,
     cursor: rows.length ? rows[rows.length - 1].joinedAt : null,
     hasMore: rows.length === limit,
   });
@@ -137,7 +143,7 @@ export async function DELETE(request: Request, { params }: Params) {
     return NextResponse.json({ error: "User ID required" }, { status: 400 });
   }
 
-  const result = await leaveCommunity(db, id, rawTarget, user.id, user.role === "admin");
+  const result = await leaveCommunity(db, id, rawTarget, user.id, isAdminRole(user.role));
   if (!result.ok) {
     if (result.reason === "not_found") {
       return NextResponse.json({ error: "Community not found" }, { status: 404 });

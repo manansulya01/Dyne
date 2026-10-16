@@ -1,4 +1,6 @@
 /** HTTP E2E: watch, search, admin/moderation, campus. */
+import { execFileSync } from "node:child_process";
+
 const BASE = process.env.APP_BASE || "http://127.0.0.1:3117";
 let pass = 0;
 let fail = 0;
@@ -63,6 +65,9 @@ const A = makeClient();
 const B = makeClient();
 await A.signup("watcha@school.test", "watcha_e2e", "WatchA");
 await B.signup("watchb@school.test", "watchb_e2e", "WatchB");
+// Video publishing is a teacher capability (videos.create); A publishes while
+// B stays a student so the non-owner 403 below is genuine.
+execFileSync(process.execPath, ["scripts/promote.mjs", "watcha@school.test", "teacher"], { stdio: "pipe" });
 
 // Watch: upload bytes -> metadata -> view throttle -> authz.
 let videoId;
@@ -77,7 +82,7 @@ let videoId;
     title: "Robotics Finals", description: "club night",
     videoUrl: up.data?.media?.url, category: "clubs",
   }));
-  check("video metadata saved", v.status === 200 && !!v.data?.video?.id, `status=${v.status}`);
+  check("video metadata saved", (v.status === 200 || v.status === 201) && !!v.data?.video?.id, `status=${v.status}`);
   videoId = v.data?.video?.id;
   // Relative local URLs must validate (regression: absolute-only schema).
   check("relative video url accepted", typeof v.data?.video?.video_url === "string", "");
@@ -149,7 +154,7 @@ let videoId;
   // visibility check BEFORE that happens.
   const feed0 = await A.req("GET", "/api/posts?limit=10");
   const target0 = (feed0.data?.posts || [])[0]?.id;
-  const rep0 = await B.req("POST", "/api/reports", json({ targetType: "post", targetId: target0, reason: "early spam test" }));
+  const rep0 = await B.req("POST", "/api/reports", json({ targetType: "post", targetId: target0, reason: "spam" }));
   check("report created (as student)", rep0.status === 200, `status=${rep0.status}`);
   const mine0 = await B.req("GET", "/api/reports?limit=10");
   check(
@@ -173,7 +178,7 @@ let videoId;
   const feed = await A.req("GET", "/api/posts?limit=10");
   const target = (feed.data?.posts || [])[0]?.id;
   check("report target exists", !!target, "");
-  const rep = await C.req("POST", "/api/reports", json({ targetType: "post", targetId: target, reason: "spam test" }));
+  const rep = await C.req("POST", "/api/reports", json({ targetType: "post", targetId: target, reason: "spam" }));
   check("report created", rep.status === 200, `status=${rep.status}`);
   const cid = (await C.req("GET", "/api/profile")).data?.profile?.id;
   const mine = await C.req("GET", "/api/reports?limit=10");

@@ -4,10 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "db:dev": "node scripts/dev-mongo.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "bootstrap:admin": "node --experimental-strip-types scripts/bootstrap-admin.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

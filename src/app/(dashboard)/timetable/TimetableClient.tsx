@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Table2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -35,15 +35,19 @@ export function TimetableClient({ canEdit }: { canEdit: boolean }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [day, setDay] = useState<number>(() => new Date().getDay());
+  const [filterGrade, setFilterGrade] = useState("");
   const [form, setForm] = useState({ startTime: "09:00", endTime: "09:50", subject: "", room: "", teacher: "", classGrade: "" });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async (grade?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/timetable");
+      const params = new URLSearchParams();
+      const g = (grade ?? filterGrade).trim();
+      if (g) params.set("classGrade", g);
+      const res = await fetch(`/api/timetable${params.toString() ? `?${params.toString()}` : ""}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Failed to load timetable");
       setEntries(json.entries ?? []);
@@ -52,11 +56,16 @@ export function TimetableClient({ canEdit }: { canEdit: boolean }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterGrade]);
 
-  // Initial timetable load only.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { void load(); }, []);
+  // One-time initial load (unfiltered). The ref guard keeps it once-only
+  // even though `load` identity changes with the grade filter input.
+  const didInitRef = useRef(false);
+  useEffect(() => {
+    if (didInitRef.current) return;
+    didInitRef.current = true;
+    void load("");
+  }, [load]);
 
   const dayEntries = useMemo(
     () => entries.filter((e) => e.dayOfWeek === day).sort((a, b) => a.periodIndex - b.periodIndex || a.startTime.localeCompare(b.startTime)),
@@ -102,13 +111,23 @@ export function TimetableClient({ canEdit }: { canEdit: boolean }) {
   };
 
   const clearDay = async () => {
-    if (!confirm(`Clear all periods on ${DAYS[day]}?`)) return;
-    // Clear is scoped server-side by classGrade only; for day scoping we
-    // delete via repeated admin clears is overkill — instead inform.
-    // Minimal honest approach: full clear requires confirmation.
-    if (!confirm("This clears the whole timetable. Continue?")) return;
-    await fetch("/api/timetable", { method: "DELETE" });
-    await load();
+    const grade = filterGrade.trim();
+    if (!grade) {
+      setFormError("Enter a class/grade filter above first — clearing requires an explicit class scope.");
+      return;
+    }
+    if (!confirm(`Clear all periods on ${DAYS[day]} for ${grade}?`)) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/timetable?classGrade=${encodeURIComponent(grade)}&dayOfWeek=${day}`, { method: "DELETE" });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(typeof json?.error === "string" ? json.error : "Could not clear");
+      await load();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Could not clear");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) return <div className="mx-auto max-w-3xl space-y-3 p-4"><ListSkeleton rows={5} /></div>;
@@ -120,6 +139,14 @@ export function TimetableClient({ canEdit }: { canEdit: boolean }) {
         <Table2 className="h-6 w-6 text-primary" aria-hidden="true" /> Timetable
       </h1>
       <p className="mt-0.5 text-sm text-muted-foreground">Days, periods, subjects, rooms, and teachers — with the current period highlighted.</p>
+
+      <div className="mt-3 flex gap-2">
+        <div className="flex-1">
+          <label htmlFor="tt-filter-grade" className="sr-only">Filter by class or grade</label>
+          <Input id="tt-filter-grade" value={filterGrade} onChange={(e) => setFilterGrade(e.target.value)} placeholder="Filter by class/grade (e.g. 10-A)" maxLength={50} className="min-h-[44px]" />
+        </div>
+        <Button variant="outline" className="min-h-[44px] shrink-0" onClick={() => void load()}>Apply</Button>
+      </div>
 
       <div className="mt-4 flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Day of week">
         {DAYS.map((d, i) => (
@@ -144,18 +171,27 @@ export function TimetableClient({ canEdit }: { canEdit: boolean }) {
           {dayEntries.map((e, i) => {
             const isCurrent = i === currentIdx;
             const isNext = i === nextIdx && currentIdx === -1;
+            const start = toMin(e.startTime);
+            const end = toMin(e.endTime);
+            const progress = isCurrent ? Math.min(100, Math.max(0, ((mins - start) / Math.max(end - start, 1)) * 100)) : 0;
+            const remaining = isCurrent ? end - mins : 0;
             return (
               <li key={e.id} className={`dyne-card flex items-center gap-3 p-3.5 ${isCurrent ? "border-2 border-primary" : ""}`} aria-current={isCurrent ? "time" : undefined}>
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted text-sm font-bold">{e.periodIndex + 1}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-semibold">
                     {e.subject}
-                    {isCurrent && <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-[11px] text-primary-foreground">Now</span>}
+                    {isCurrent && <span className="ml-2 rounded-full bg-primary px-2 py-0.5 text-[11px] text-primary-foreground">Now · {remaining}m left</span>}
                     {isNext && <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">Next</span>}
                   </span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {e.startTime} – {e.endTime}{e.room ? ` · Room ${e.room}` : ""}{e.teacher ? ` · ${e.teacher}` : ""}
                   </span>
+                  {isCurrent && (
+                    <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} aria-label={`${e.subject} progress`}>
+                      <span className="block h-full rounded-full bg-primary transition-[width]" style={{ width: `${progress}%` }} />
+                    </span>
+                  )}
                 </span>
               </li>
             );

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
 import { formatRelativeTime } from "@/lib/utils";
 import { Calendar, MapPin, Users } from "lucide-react";
 import { format, parseISO } from "date-fns";

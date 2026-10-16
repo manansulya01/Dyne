@@ -5,7 +5,8 @@ import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { listCommunityPosts, memberRole } from "@/lib/db/communities";
 import { toCommunityPostJSON } from "@/lib/db/contracts";
 import { parseLimitParam } from "@/lib/utils";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session"
+import { isAdminRole } from "@/lib/permissions";
 
 export async function GET(
   request: Request,
@@ -32,7 +33,7 @@ export async function GET(
   const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
   const membership = await memberRole(db, id, user.id);
-  if (!membership && user.role !== "admin") {
+  if (!membership && !isAdminRole(user.role)) {
     const community = await col<CommunityDoc>(db, "communities").findOne({
       _id: toObjectId(id),
     } as never);

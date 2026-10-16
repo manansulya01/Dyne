@@ -34,29 +34,34 @@ describe("chat repository", () => {
     await Promise.all(collectionNames.map((n) => col(db, n).deleteMany({})));
   });
 
-  it("creates direct conversations once and messages flow with read state", async () => {
+  it("rejects direct conversations (DMs disabled) and supports group messaging with read state", async () => {
     const db = await getDb();
     const alice = await makeUser("alice");
     const bob = await makeUser("bob");
 
-    expect(await createConversation(db, alice, { type: "direct", participantIds: [] })).toEqual({
-      ok: false, reason: "direct_needs_one",
+    // Student-to-student DMs are disabled product-wide.
+    expect(await createConversation(db, alice, { type: "direct", participantIds: [bob] })).toEqual({
+      ok: false, reason: "direct_disabled",
     });
-    const first = await createConversation(db, alice, { type: "direct", participantIds: [bob] });
-    if (!first.ok) throw new Error("setup failed");
-    const second = await createConversation(db, bob, { type: "direct", participantIds: [alice] });
-    expect(second).toMatchObject({ ok: true, reused: true });
-    if (!second.ok) throw new Error("setup failed");
-    expect(second.conversationId.equals(first.conversationId)).toBe(true);
+    expect(await createConversation(db, alice, { type: "direct", participantIds: [] })).toEqual({
+      ok: false, reason: "direct_disabled",
+    });
 
-    const sent = await sendMessage(db, first.conversationId, alice, "Hey Bob");
+    // Community/group messaging remains: create a group and message flows.
+    // (Students need a real group: creator + 2 others. One-to-one
+    // conversations are DMs in disguise and stay disabled.)
+    const cara = await makeUser("cara");
+    const group = await createConversation(db, alice, { type: "group", participantIds: [bob, cara], name: "Study" });
+    if (!group.ok) throw new Error("setup failed");
+
+    const sent = await sendMessage(db, group.conversationId, alice, "Hey Bob");
     expect(sent.ok).toBe(true);
 
     const bobList = (await listConversations(db, bob)) as Array<Record<string, unknown>>;
     expect(bobList).toHaveLength(1);
     expect(bobList[0].unread).toBe(true);
 
-    const history = await listMessages(db, first.conversationId, bob);
+    const history = await listMessages(db, group.conversationId, bob);
     if (!history.ok) throw new Error("setup failed");
     expect(history.messages).toHaveLength(1);
 
@@ -69,7 +74,8 @@ describe("chat repository", () => {
     const alice = await makeUser("alice");
     const bob = await makeUser("bob");
     const cara = await makeUser("cara");
-    const convo = await createConversation(db, alice, { type: "direct", participantIds: [bob] });
+    const dave = await makeUser("dave");
+    const convo = await createConversation(db, alice, { type: "group", participantIds: [bob, dave], name: "G" });
     if (!convo.ok) throw new Error("setup failed");
 
     expect(await isConversationMember(db, convo.conversationId, cara)).toBe(false);
@@ -87,18 +93,13 @@ describe("chat repository", () => {
     const alice = await makeUser("alice");
     const bob = await makeUser("bob");
     const cara = await makeUser("cara");
+    const dave = await makeUser("dave");
     const group = await createConversation(db, alice, {
-      type: "group", participantIds: [bob], name: "Study",
+      type: "group", participantIds: [bob, dave], name: "Study",
     });
     if (!group.ok) throw new Error("setup failed");
 
-    // Direct conversations reject member adds.
-    const dm = await createConversation(db, alice, { type: "direct", participantIds: [cara] });
-    if (!dm.ok) throw new Error("setup failed");
-    expect(await addGroupMembers(db, dm.conversationId, alice, [bob])).toEqual({
-      ok: false, reason: "direct_only",
-    });
-
+    // Legacy direct conversation ids reject member adds (group-only).
     expect(await addGroupMembers(db, group.conversationId, cara, [cara])).toEqual({
       ok: false, reason: "forbidden",
     });

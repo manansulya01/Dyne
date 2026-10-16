@@ -9,7 +9,16 @@ import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 import type { ReportStatus } from "@/lib/mongo/collections";
 
 const reviewSchema = z.object({
-  status: z.enum(["reviewing", "resolved", "dismissed"]),
+  status: z.enum([
+    "reviewing",
+    "resolved",
+    "dismissed",
+    "OPEN",
+    "UNDER_REVIEW",
+    "ACTION_TAKEN",
+    "DISMISSED",
+    "ESCALATED",
+  ]),
   action: z.enum(["warning", "content_removal", "temp_ban", "perm_ban", "dismiss"]).optional(),
   reason: z.string().max(500).optional(),
   moderatorNotes: z.string().max(2000).optional(),
@@ -31,7 +40,7 @@ export async function PATCH(
     return NextResponse.json({ error: message }, { status });
   }
 
-  if (!["admin", "teacher", "staff"].includes(user.role)) {
+  if (!["moderator", "admin", "super_admin", "staff", "teacher"].includes(user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

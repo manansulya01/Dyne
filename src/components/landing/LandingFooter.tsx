@@ -15,7 +15,7 @@ export default function LandingFooter() {
           <ul className="mt-3 space-y-2.5 text-sm text-zinc-300">
             <li><Link className="hover:text-white" href="/about">About</Link></li>
             <li><Link className="hover:text-white" href="/blogs">Blogs</Link></li>
-            <li><Link className="hover:text-white" href="/feed">Home</Link></li>
+            <li><Link className="hover:text-white" href="/feed">Feed</Link></li>
             <li><Link className="hover:text-white" href="/explore">Explore</Link></li>
           </ul>
         </nav>

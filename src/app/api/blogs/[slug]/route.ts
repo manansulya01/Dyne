@@ -4,10 +4,11 @@ import { ensureIndexes, col, type BlogDoc } from "@/lib/mongo/collections";
 import { toObjectId } from "@/lib/mongo/ids";
 import { blogCreateSchema } from "@/lib/validation";
 import { deleteBlog, getBlogBySlug, listBlogs, updateBlog } from "@/lib/db/content";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session"
+import { isAdminRole } from "@/lib/permissions";
 
 interface Params { params: Promise<{ slug: string }>; }
-const CAN_MANAGE = new Set(["admin", "teacher", "staff", "club"]);
+const CAN_MANAGE = new Set(["admin", "super_admin", "moderator", "teacher", "staff", "club"]);
 
 export async function GET(_request: Request, { params }: Params) {
   const { slug } = await params;
@@ -57,7 +58,7 @@ export async function DELETE(_request: Request, { params }: Params) {
   const existing = await getBlogBySlug(db, slug, true);
   if (!existing) return NextResponse.json({ error: "Article not found" }, { status: 404 });
   // Non-admins may only delete their own articles.
-  if (user.role !== "admin") {
+  if (!isAdminRole(user.role)) {
     const row = await col<BlogDoc>(db, "blogs").findOne({ slug } as never);
     if (row && !row.authorId.equals(toObjectId(user.id))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });

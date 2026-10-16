@@ -29,7 +29,11 @@ export async function createComment(
       postId: toObjectId(postId),
       deletedAt: null,
     } as never);
-    if (!parentRow) return { ok: false as const, reason: "bad_parent" as const };
+    // Single-level threading: replies attach to top-level comments only.
+    // Deeper nesting is rejected so threads render predictably everywhere.
+    if (!parentRow || parentRow.parentId) {
+      return { ok: false as const, reason: "bad_parent" as const };
+    }
   }
 
   const now = new Date();
@@ -46,9 +50,12 @@ export async function createComment(
 }
 
 export async function listComments(db: Db, postId: string | ObjectId, limit = 20) {
+  // Threads of soft-deleted posts stay hidden (post delete cascades reads).
+  const post = await col(db, "posts").findOne({ _id: toObjectId(postId) } as never);
+  if (!post || post.deletedAt) return [];
   const rows = await col<CommentDoc>(db, "comments")
     .find({ postId: toObjectId(postId), parentId: null, deletedAt: null } as never)
-    .sort({ createdAt: 1 })
+    .sort({ createdAt: 1, _id: 1 })
     .limit(safeLimit(limit, 50))
     .toArray();
   const replyCounts = await countReplies(db, rows.map((r) => r._id));
@@ -58,6 +65,37 @@ export async function listComments(db: Db, postId: string | ObjectId, limit = 20
       ...r,
       author: authors.get(r.authorId.toHexString()) ?? null,
       replyCount: replyCounts.get(r._id.toHexString()) ?? 0,
+    }))
+  );
+}
+
+/** Replies to one top-level comment, oldest first. Parent is verified to belong to the post. */
+export async function listReplies(
+  db: Db,
+  postId: string | ObjectId,
+  parentId: string | ObjectId,
+  limit = 20
+) {
+  const pid = toObjectId(postId);
+  const parent = toObjectId(parentId);
+  const parentRow = await col<CommentDoc>(db, "comments").findOne({
+    _id: parent,
+    postId: pid,
+    parentId: null,
+    deletedAt: null,
+  } as never);
+  if (!parentRow) return null;
+  const rows = await col<CommentDoc>(db, "comments")
+    .find({ postId: pid, parentId: parent, deletedAt: null } as never)
+    .sort({ createdAt: 1, _id: 1 })
+    .limit(safeLimit(limit, 50))
+    .toArray();
+  const authors = await resolveAuthors(db, rows.map((r) => r.authorId));
+  return serializeMany(
+    rows.map((r) => ({
+      ...r,
+      author: authors.get(r.authorId.toHexString()) ?? null,
+      replyCount: 0,
     }))
   );
 }

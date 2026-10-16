@@ -1,12 +1,13 @@
-import { Building2, CalendarDays, Clapperboard, Compass, MessagesSquare, Newspaper, CalendarClock, Users } from "lucide-react";
+import { Building2, CalendarDays, Clapperboard, Compass, MessagesSquare, Newspaper, CalendarClock, Users, BookOpen } from "lucide-react";
 import Link from "next/link";
 
 const AREAS = [
   { icon: Users, title: "People", body: "Find classmates, clubs, and collaborators.", href: "/people" },
-  { icon: MessagesSquare, title: "Conversation", body: "Direct messages and group chats for campus life.", href: "/chat" },
+  { icon: MessagesSquare, title: "Conversation", body: "Community group chats for campus life.", href: "/chat" },
   { icon: Compass, title: "Communities", body: "Course groups, societies, and hobby circles.", href: "/communities" },
   { icon: CalendarDays, title: "Events", body: "Fests, workshops, matches, and meetups.", href: "/events" },
   { icon: Building2, title: "Campus", body: "Buildings, clubs, and places that matter.", href: "/campus" },
+  { icon: BookOpen, title: "Study Materials", body: "Notes, worksheets, and revision material.", href: "/study-materials" },
   { icon: Clapperboard, title: "Watch", body: "Lectures, highlights, and student films.", href: "/watch" },
   { icon: Newspaper, title: "Blogs", body: "Stories and announcements from MVA.", href: "/blogs" },
   { icon: CalendarClock, title: "Schedule", body: "Today, this week, and what's next.", href: "/schedule" },
@@ -24,7 +25,7 @@ export default function EcosystemSections() {
         </h2>
         <p className="mx-auto mt-4 max-w-2xl text-center text-[clamp(1rem,2vw,1.125rem)] leading-relaxed text-zinc-400">
           Not eight separate apps — one coherent home where posts, people, communities,
-          conversations, events, videos, stories, and schedules connect.
+          conversations, events, videos, stories, study materials, and schedules connect.
         </p>
         <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {AREAS.map((a) => (

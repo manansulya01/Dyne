@@ -98,7 +98,7 @@ export function ExploreClient(props: {
                       image_url: (e.imageUrl as string | null) ?? null,
                       start_time: new Date(e.startTime as string).toISOString(),
                       end_time: new Date(e.endTime as string).toISOString(),
-                      attendee_count: 0,
+                      attendee_count: Number(e.attendeeCount ?? 0),
                     }}
                   />
                 );

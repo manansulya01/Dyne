@@ -6,7 +6,8 @@ import { createEvent, listEvents } from "@/lib/db/events";
 import { resolveAuthors } from "@/lib/db/authors";
 import { toEventJSON } from "@/lib/db/contracts";
 import { parseLimitParam } from "@/lib/utils";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session"
+import { isAdminRole } from "@/lib/permissions";
 
 async function authed() {
   const db = await getDb();
@@ -18,6 +19,10 @@ async function authed() {
     const { status, message } = toHttpError(err);
     return { db, error: NextResponse.json({ error: message }, { status }) };
   }
+}
+
+function objectIdSafe(id: string): boolean {
+  return /^[0-9a-fA-F]{24}$/.test(id);
 }
 
 async function withLocationName(
@@ -38,10 +43,20 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const cursor = searchParams.get("cursor");
   const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
+  const organizerId = searchParams.get("organizerId");
+  const attendeeId = searchParams.get("attendeeId");
+  if (organizerId && !objectIdSafe(organizerId)) {
+    return NextResponse.json({ error: "Invalid organizer id" }, { status: 400 });
+  }
+  if (attendeeId && !objectIdSafe(attendeeId)) {
+    return NextResponse.json({ error: "Invalid attendee id" }, { status: 400 });
+  }
 
   const events = await listEvents(db, user.id, limit, {
     cursor,
-    isAdmin: user.role === "admin",
+    isAdmin: isAdminRole(user.role),
+    organizerId: organizerId ?? undefined,
+    attendeeId: attendeeId ?? undefined,
   });
   const buildings = await col(db, "buildings").find({}).project({ name: 1 }).toArray();
   const buildingMap = new Map(

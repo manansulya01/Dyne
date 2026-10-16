@@ -92,18 +92,20 @@ describe("communities repository", () => {
     // Owner promotes Bob to moderator.
     expect((await setMemberRole(db, created.communityId, bob, owner, "moderator")).ok).toBe(true);
     expect(await memberRole(db, created.communityId, bob)).toBe("moderator");
-    // Moderators cannot promote others to moderator...
+    // Moderators cannot change roles at all (owner/admin tier only)...
     expect(await setMemberRole(db, created.communityId, cara, bob, "moderator")).toEqual({
-      ok: false, reason: "owner_only_promote",
+      ok: false, reason: "forbidden",
     });
-    // ...but can keep members as members.
-    expect((await setMemberRole(db, created.communityId, cara, bob, "member")).ok).toBe(true);
+    // ...including no-op member assignments.
+    expect(await setMemberRole(db, created.communityId, cara, bob, "member")).toEqual({
+      ok: false, reason: "forbidden",
+    });
     // Moderators cannot demote fellow moderators.
     const dave = await makeUser("dave");
     await joinCommunity(db, created.communityId, dave);
     await setMemberRole(db, created.communityId, dave, owner, "moderator");
     expect(await setMemberRole(db, created.communityId, dave, bob, "member")).toEqual({
-      ok: false, reason: "owner_only_demote",
+      ok: false, reason: "forbidden",
     });
     // Owner's own role is untouchable.
     expect(await setMemberRole(db, created.communityId, owner, owner, "member")).toEqual({

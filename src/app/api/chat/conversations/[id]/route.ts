@@ -69,6 +69,17 @@ export async function GET(_request: Request, { params }: Params) {
   if (!full) {
     return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
   }
+  // DMs disabled: ordinary users cannot open legacy direct conversations.
+  // Moderators/admins retain read access for moderation.
+  if (full.type === "direct") {
+    const privileged = ["moderator", "admin", "super_admin", "staff", "teacher"].includes(user.role);
+    if (!privileged) {
+      return NextResponse.json(
+        { error: "Direct messages are disabled. Use community group chats." },
+        { status: 403 }
+      );
+    }
+  }
   const isMember = full.members.some((m) => m.user_id === user.id);
   if (!isMember) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -114,9 +125,7 @@ export async function PATCH(request: Request, { params }: Params) {
       if (
         typeof image_url !== "string" ||
         image_url.length > 2000 ||
-        (!image_url.startsWith("/api/files/") &&
-          !image_url.startsWith("http://") &&
-          !image_url.startsWith("https://"))
+        (!image_url.startsWith("/api/files/") && !image_url.startsWith("https://"))
       ) {
         return NextResponse.json({ error: "Invalid image URL" }, { status: 400 });
       }

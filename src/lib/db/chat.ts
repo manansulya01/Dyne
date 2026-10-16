@@ -8,8 +8,9 @@ import {
 } from "@/lib/mongo/collections";
 import { toObjectId } from "@/lib/mongo/ids";
 import { resolveAuthors } from "./authors";
-import { serialize, serializeMany } from "./serialize";
+import { serializeMany } from "./serialize";
 import { safeLimit } from "@/lib/utils";
+import { moderateContent } from "@/lib/moderation";
 
 export async function isConversationMember(
   db: Db,
@@ -23,12 +24,19 @@ export async function isConversationMember(
   return !!row;
 }
 
-/** Create a direct or group conversation with the creator as first member. */
+/** Create a group/community conversation with the creator as first member.
+ *  NOTE: student-to-student direct messages are disabled product-wide.
+ *  `type: "direct"` always fails with `direct_disabled`. Community/group
+ *  messaging remains fully supported, optionally scoped to a community the
+ *  creator belongs to. */
 export async function createConversation(
   db: Db,
   creatorId: string | ObjectId,
-  input: { type: "direct" | "group"; participantIds: Array<string | ObjectId>; name?: string }
+  input: { type: "direct" | "group"; participantIds: Array<string | ObjectId>; name?: string; communityId?: string | ObjectId | null; channelId?: string | ObjectId | null }
 ) {
+  if (input.type === "direct") {
+    return { ok: false as const, reason: "direct_disabled" as const };
+  }
   const creator = toObjectId(creatorId);
   const seen = new Map<string, ObjectId>();
   for (const raw of input.participantIds) {
@@ -36,9 +44,6 @@ export async function createConversation(
     if (!id.equals(creator)) seen.set(id.toHexString(), id);
   }
   const others = [...seen.values()];
-  if (input.type === "direct" && others.length !== 1) {
-    return { ok: false as const, reason: "direct_needs_one" as const };
-  }
   if (others.length === 0) {
     return { ok: false as const, reason: "no_participants" as const };
   }
@@ -51,34 +56,73 @@ export async function createConversation(
     return { ok: false as const, reason: "unknown_user" as const };
   }
 
-  // Reuse an existing direct conversation between the same pair.
-  if (input.type === "direct") {
-    const pair = [creator, others[0]];
-    const candidates = await col<ConversationMemberDoc>(db, "chatMembers")
-      .aggregate([
-        { $match: { userId: { $in: pair } } },
-        { $group: { _id: "$conversationId", members: { $addToSet: "$userId" } } },
-        { $match: { members: { $size: 2 } } },
-      ])
-      .toArray();
-    for (const c of candidates as Array<{ _id: ObjectId; members: ObjectId[] }>) {
-      const set = new Set(c.members.map((m) => m.toHexString()));
-      if (set.has(creator.toHexString()) && set.has(others[0].toHexString()) && set.size === 2) {
-        const convo = await col<ConversationDoc>(db, "chatConversations").findOne({
-          _id: c._id,
-          type: "direct",
-        } as never);
-        if (convo) return { ok: true as const, conversationId: convo._id, reused: true as const };
-      }
+  // Optional community scoping: creator must be a member of the community.
+  let communityId: ObjectId | null = null;
+  if (input.communityId) {
+    try {
+      communityId = toObjectId(input.communityId);
+    } catch {
+      return { ok: false as const, reason: "unknown_community" as const };
+    }
+    const membership = await col(db, "communityMembers").findOne({
+      communityId,
+      userId: creator,
+    } as never);
+    if (!membership) {
+      return { ok: false as const, reason: "not_community_member" as const };
+    }
+  }
+
+  // A one-to-one "group" is a DM in disguise, so the product rule is enforced
+  // here rather than trusting the requested type: students may only open an
+  // unscoped conversation when it really is a group (creator + 2+ others), or a
+  // community/channel-scoped space (membership already checked below).
+  if (!input.communityId && !input.channelId && others.length < 2) {
+    const creatorRow = await col(db, "users")
+      .findOne({ _id: creator } as never, { projection: { role: 1 } })
+      .catch(() => null);
+    const creatorRole = String(
+      (creatorRow as unknown as { role?: string } | null)?.role ?? "student"
+    );
+    if (creatorRole === "student" || creatorRole === "club") {
+      return { ok: false as const, reason: "direct_disabled" as const };
+    }
+  }
+
+  // Optional channel scoping: the channel must belong to the same community
+  // (a channel always implies its community).
+  let channelId: ObjectId | null = null;
+  if (input.channelId) {
+    try {
+      channelId = toObjectId(input.channelId);
+    } catch {
+      return { ok: false as const, reason: "unknown_channel" as const };
+    }
+    const channel = await col(db, "communityChannels").findOne({ _id: channelId } as never);
+    if (!channel) {
+      return { ok: false as const, reason: "unknown_channel" as const };
+    }
+    if (communityId && !channel.communityId.equals(communityId)) {
+      return { ok: false as const, reason: "channel_mismatch" as const };
+    }
+    communityId = channel.communityId;
+    const membership = await col(db, "communityMembers").findOne({
+      communityId,
+      userId: creator,
+    } as never);
+    if (!membership) {
+      return { ok: false as const, reason: "not_community_member" as const };
     }
   }
 
   const now = new Date();
   const convo = await col<ConversationDoc>(db, "chatConversations").insertOne({
-    type: input.type,
-    name: input.type === "group" ? input.name?.trim() || "Group chat" : null,
+    type: "group",
+    name: input.name?.trim().slice(0, 100) || "Group chat",
     imageUrl: null,
     createdBy: creator,
+    communityId,
+    channelId,
     createdAt: now,
     updatedAt: now,
   } as never);
@@ -94,7 +138,9 @@ export async function createConversation(
   return { ok: true as const, conversationId: convo.insertedId };
 }
 
-/** Conversations for a user, newest activity first, with last message + unread flag. */
+/** Conversations for a user, newest activity first, with last message + unread flag.
+ *  Direct (legacy) conversations are excluded: DMs are disabled product-wide.
+ *  Moderation access to legacy directs happens via admin audit paths, not this list. */
 export async function listConversations(db: Db, userId: string | ObjectId, limit = 20) {
   const uid = toObjectId(userId);
   const memberships = await col<ConversationMemberDoc>(db, "chatMembers")
@@ -103,8 +149,8 @@ export async function listConversations(db: Db, userId: string | ObjectId, limit
   if (memberships.length === 0) return [];
   const byConvo = new Map(memberships.map((m) => [m.conversationId.toHexString(), m]));
   const convos = await col<ConversationDoc>(db, "chatConversations")
-    .find({ _id: { $in: [...byConvo.keys()].map((id) => new ObjectId(id)) } } as never)
-    .sort({ updatedAt: -1 })
+    .find({ _id: { $in: [...byConvo.keys()].map((id) => new ObjectId(id)) }, type: "group" } as never)
+    .sort({ updatedAt: -1, _id: -1 })
     .limit(safeLimit(limit, 50))
     .toArray();
 
@@ -163,38 +209,105 @@ export async function sendMessage(
   if (!(await isConversationMember(db, conversationId, senderId))) {
     return { ok: false as const, reason: "forbidden" as const };
   }
+  // DMs disabled: only group/community conversations accept messages from
+  // ordinary users. Moderators/admins may still post in legacy directs only
+  // via explicit moderation flows (regular send is blocked for everyone to
+  // prevent forged-conversation DM abuse).
+  const convo = await col<ConversationDoc>(db, "chatConversations").findOne({
+    _id: toObjectId(conversationId),
+  } as never);
+  if (!convo) return { ok: false as const, reason: "forbidden" as const };
+  if (convo.type !== "group") {
+    return { ok: false as const, reason: "direct_disabled" as const };
+  }
   const now = new Date();
+  // Resolve @username mentions server-side (max 10, members only).
+  const mentions = await resolveMentions(db, convo._id, text);
+
+  /* ---------------------- Moderation pipeline ---------------------- *
+   * Runs AFTER authentication/authorization (membership + group-only) and
+   * validation. High-confidence violations are never delivered; borderline
+   * content is held for moderator review. The AI layer is additional — the
+   * deterministic rules and human queue remain the primary mechanism.     */
+  // Pre-allocate the message id so the moderation review is recorded against
+  // the exact document (no guessing by timestamp).
+  const messageId = new ObjectId();
+  const moderation = await moderateContent(db, {
+    contentType: "message",
+    contentId: messageId,
+    authorId: toObjectId(senderId),
+    text,
+    mediaUrl: attachments[0]?.url ?? null,
+    mediaProvided: attachments.length > 0,
+    conversationId: convo._id,
+    // Short excerpt only: full private content never leaves the chat store.
+    excerpt: text.slice(0, 120),
+  });
+
+  if (moderation.decision === "rejected") {
+    // The review record exists for moderators; the message itself is never
+    // stored, so nothing is delivered.
+    return { ok: false as const, reason: "blocked" as const, moderationReason: moderation.reason };
+  }
+
   const res = await col<MessageDoc>(db, "chatMessages").insertOne({
+    _id: messageId,
     conversationId: toObjectId(conversationId),
     senderId: toObjectId(senderId),
     content: text || null,
     attachments,
+    mentions,
+    reactions: {},
+    moderationStatus: moderation.decision,
+    moderationReason: moderation.reason,
+    moderationScore: moderation.score,
     createdAt: now,
     updatedAt: now,
+    editedAt: null,
     deletedAt: null,
   } as never);
   await col<ConversationDoc>(db, "chatConversations").updateOne(
     { _id: toObjectId(conversationId) } as never,
     { $set: { updatedAt: now } }
   );
-  return { ok: true as const, messageId: res.insertedId };
+  return {
+    ok: true as const,
+    messageId: res.insertedId,
+    moderationStatus: moderation.decision,
+    heldForReview: moderation.decision !== "approved",
+  };
 }
 
 export async function listMessages(
   db: Db,
   conversationId: string | ObjectId,
   userId: string | ObjectId,
-  limit = 50
+  limit = 50,
+  opts: { viewerRole?: string } = {}
 ) {
   if (!(await isConversationMember(db, conversationId, userId))) {
-    return { ok: false as const, reason: "forbidden" as const };
+    // Moderators/admins may read legacy directs for moderation even without
+    // membership; ordinary users (incl. students) get 403.
+    const privileged = ["moderator", "admin", "super_admin", "staff", "teacher"].includes(opts.viewerRole ?? "");
+    if (!privileged) return { ok: false as const, reason: "forbidden" as const };
+    const convo = await col<ConversationDoc>(db, "chatConversations").findOne({
+      _id: toObjectId(conversationId),
+    } as never);
+    if (!convo) return { ok: false as const, reason: "forbidden" as const };
+  }
+  const convoType = await col<ConversationDoc>(db, "chatConversations").findOne(
+    { _id: toObjectId(conversationId) } as never
+  );
+  if (convoType && convoType.type !== "group") {
+    const privileged = ["moderator", "admin", "super_admin", "staff", "teacher"].includes(opts.viewerRole ?? "");
+    if (!privileged) return { ok: false as const, reason: "direct_disabled" as const };
   }
   const rows = (
     await col<MessageDoc>(db, "chatMessages")
       .find({ conversationId: toObjectId(conversationId), deletedAt: null } as never)
       // Newest N first, then reverse to chronological: long threads show the
       // latest messages (oldest-N would hide everything past the limit).
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, _id: -1 })
       .limit(safeLimit(limit, 100, 50))
       .toArray()
   ).reverse();
@@ -253,4 +366,105 @@ export async function addGroupMembers(
     }
   }
   return { ok: true as const, added };
+}
+
+/** Extract @username mentions and resolve to member user ids (max 10). */
+async function resolveMentions(db: Db, conversationId: ObjectId, text: string): Promise<ObjectId[]> {
+  const names = [...new Set([...text.matchAll(/@([a-zA-Z0-9_]{3,30})/g)].map((m) => m[1]))].slice(0, 10);
+  if (names.length === 0) return [];
+  const users = await col(db, "users")
+    .find({ username: { $in: names } } as never)
+    .project({ _id: 1 })
+    .toArray();
+  if (users.length === 0) return [];
+  const memberRows = await col<ConversationMemberDoc>(db, "chatMembers")
+    .find({ conversationId, userId: { $in: users.map((u) => u._id) } } as never)
+    .project({ userId: 1 })
+    .toArray();
+  return memberRows.map((m) => m.userId);
+}
+
+/** Edit own message (or any message as moderator/admin). Group conversations only. */
+export async function editMessage(
+  db: Db,
+  messageId: string | ObjectId,
+  actorId: string | ObjectId,
+  actorRole: string,
+  content: string
+) {
+  const text = content.trim();
+  if (!text || text.length > 10000) return { ok: false as const, reason: "bad_content" as const };
+  const mid = toObjectId(messageId);
+  const msg = await col<MessageDoc>(db, "chatMessages").findOne({ _id: mid } as never);
+  if (!msg || msg.deletedAt) return { ok: false as const, reason: "not_found" as const };
+  const convo = await col<ConversationDoc>(db, "chatConversations").findOne({ _id: msg.conversationId } as never);
+  if (!convo || convo.type !== "group") return { ok: false as const, reason: "direct_disabled" as const };
+  const privileged = ["moderator", "admin", "super_admin", "staff", "teacher"].includes(actorRole);
+  if (!msg.senderId.equals(toObjectId(actorId)) && !privileged) {
+    return { ok: false as const, reason: "forbidden" as const };
+  }
+  if (!(await isConversationMember(db, convo._id, actorId)) && !privileged) {
+    return { ok: false as const, reason: "forbidden" as const };
+  }
+  const mentions = await resolveMentions(db, convo._id, text);
+  await col<MessageDoc>(db, "chatMessages").updateOne(
+    { _id: mid } as never,
+    { $set: { content: text, mentions, editedAt: new Date(), updatedAt: new Date() } }
+  );
+  return { ok: true as const };
+}
+
+/** Soft-delete own message (or any message as moderator/admin). */
+export async function deleteMessage(
+  db: Db,
+  messageId: string | ObjectId,
+  actorId: string | ObjectId,
+  actorRole: string
+) {
+  const mid = toObjectId(messageId);
+  const msg = await col<MessageDoc>(db, "chatMessages").findOne({ _id: mid } as never);
+  if (!msg || msg.deletedAt) return { ok: false as const, reason: "not_found" as const };
+  const convo = await col<ConversationDoc>(db, "chatConversations").findOne({ _id: msg.conversationId } as never);
+  if (!convo || convo.type !== "group") return { ok: false as const, reason: "direct_disabled" as const };
+  const privileged = ["moderator", "admin", "super_admin", "staff", "teacher"].includes(actorRole);
+  if (!msg.senderId.equals(toObjectId(actorId)) && !privileged) {
+    return { ok: false as const, reason: "forbidden" as const };
+  }
+  if (!(await isConversationMember(db, convo._id, actorId)) && !privileged) {
+    return { ok: false as const, reason: "forbidden" as const };
+  }
+  await col<MessageDoc>(db, "chatMessages").updateOne(
+    { _id: mid } as never,
+    { $set: { deletedAt: new Date(), updatedAt: new Date() } }
+  );
+  return { ok: true as const };
+}
+
+const ALLOWED_REACTIONS = new Set(["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉"]);
+
+/** Toggle an emoji reaction on a group message. */
+export async function toggleMessageReaction(
+  db: Db,
+  messageId: string | ObjectId,
+  actorId: string | ObjectId,
+  emoji: string
+) {
+  if (!ALLOWED_REACTIONS.has(emoji)) return { ok: false as const, reason: "bad_emoji" as const };
+  const mid = toObjectId(messageId);
+  const msg = await col<MessageDoc>(db, "chatMessages").findOne({ _id: mid } as never);
+  if (!msg || msg.deletedAt) return { ok: false as const, reason: "not_found" as const };
+  const convo = await col<ConversationDoc>(db, "chatConversations").findOne({ _id: msg.conversationId } as never);
+  if (!convo || convo.type !== "group") return { ok: false as const, reason: "direct_disabled" as const };
+  if (!(await isConversationMember(db, convo._id, actorId))) {
+    return { ok: false as const, reason: "forbidden" as const };
+  }
+  const uidHex = toObjectId(actorId).toHexString();
+  const current: string[] = (msg.reactions?.[emoji] ?? []) as string[];
+  const has = current.includes(uidHex);
+  const next = has ? current.filter((id) => id !== uidHex) : [...current, uidHex].slice(0, 500);
+  await col<MessageDoc>(db, "chatMessages").updateOne(
+    { _id: mid } as never,
+    { $set: { [`reactions.${emoji}`]: next, updatedAt: new Date() } }
+  );
+  return { ok: true as const, added: !has };
 }

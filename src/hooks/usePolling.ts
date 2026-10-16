@@ -21,7 +21,13 @@ export const POLL_INTERVALS = {
 export function usePolling(
   fetcher: () => void | Promise<void>,
   intervalMs: number,
-  enabled = true
+  enabled = true,
+  /**
+   * Fire one fetch as soon as the hook mounts. Defaults to true; pass false
+   * when the component already loads the same data on mount (otherwise every
+   * such page issued its initial request twice).
+   */
+  immediate = true
 ) {
   const saved = useRef(fetcher);
   useEffect(() => {
@@ -43,10 +49,7 @@ export function usePolling(
 
   useEffect(() => {
     if (!enabled) return;
-    tick();
-    if (typeof document !== "undefined" && document.hidden) {
-      // Start paused when the tab is hidden; resume on visibility change.
-    }
+    if (immediate) tick();
     const id = setInterval(() => {
       if (typeof document === "undefined" || !document.hidden) tick();
     }, intervalMs);
@@ -58,5 +61,5 @@ export function usePolling(
       clearInterval(id);
       document?.removeEventListener?.("visibilitychange", onVisible);
     };
-  }, [tick, intervalMs, enabled]);
+  }, [tick, intervalMs, enabled, immediate]);
 }

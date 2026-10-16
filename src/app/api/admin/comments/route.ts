@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes, col } from "@/lib/mongo/collections";
-import { objectIdSchema } from "@/lib/mongo/ids";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { toHttpError } from "@/lib/auth/session";
 import { parseLimitParam } from "@/lib/utils";
 import { requireAdminUser } from "../stats/route";
@@ -84,7 +84,7 @@ export async function PATCH(request: Request) {
   const { commentId, action } = validated.data;
   const stamp = { $set: { deletedAt: action === "remove" ? new Date() : null, updatedAt: new Date() } };
 
-  const res = await col(db, "comments").updateOne({ _id: commentId } as never, stamp);
+  const res = await col(db, "comments").updateOne({ _id: toObjectId(commentId) } as never, stamp);
   if (res.matchedCount === 0) {
     return NextResponse.json({ error: "Comment not found" }, { status: 404 });
   }

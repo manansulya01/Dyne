@@ -1,7 +1,5 @@
 import { Metadata } from "next";
 import { CommunitiesPageClient } from "./CommunitiesPageClient";
-import { getDb } from "@/lib/mongo/client";
-import { getSessionUser } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
   title: "Communities - Dyne",
@@ -9,7 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default async function CommunitiesPage() {
-  const db = await getDb();
-  const user = await getSessionUser(db);
-  return <CommunitiesPageClient currentUserId={user?.id || null} />;
+  return <CommunitiesPageClient />;
 }

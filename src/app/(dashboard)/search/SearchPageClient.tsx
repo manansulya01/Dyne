@@ -20,12 +20,30 @@ interface Results {
   buildings: Array<{ id: string; name: string; description: string | null }>;
   clubs: Array<{ id: string; name: string; category: string | null }>;
   videos: Array<{ id: string; title: string; view_count: number }>;
+  reels: Array<{ id: string; title: string; view_count: number; category: string | null }>;
   blogs: Array<{ id: string; slug: string; title: string; excerpt: string | null; category: string | null }>;
+  studyMaterials: Array<{ id: string; title: string; subject: string | null; classGrade?: string | null }>;
+  announcements: Array<{ id: string; title: string; body: string; category: string | null; priority: string; is_pinned: boolean; created_at: string }>;
 }
 
-const EMPTY: Results = { people: [], posts: [], communities: [], events: [], buildings: [], clubs: [], videos: [], blogs: [] };
+const EMPTY: Results = {
+  people: [], posts: [], communities: [], events: [], buildings: [], clubs: [],
+  videos: [], reels: [], blogs: [], studyMaterials: [], announcements: [],
+};
 
-type Tab = "all" | "people" | "posts" | "communities" | "events" | "campus" | "videos" | "blogs";
+const RECENT_KEY = "dyne-recent-searches";
+
+function loadRecent(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((s) => typeof s === "string").slice(0, 6) : [];
+  } catch {
+    return [];
+  }
+}
+
+type Tab = "all" | "people" | "posts" | "communities" | "events" | "campus" | "videos" | "reels" | "blogs" | "study" | "announcements";
 
 export function SearchPageClient() {
   const params = useSearchParams();
@@ -35,7 +53,25 @@ export function SearchPageClient() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
+  const [recent, setRecent] = useState<string[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Recents live in localStorage (external system); read once after mount so
+  // server and first client render agree on [] (no hydration mismatch).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- external-system sync on mount
+    setRecent(loadRecent());
+  }, []);
+
+  const remember = useCallback((term: string) => {
+    const t = term.trim().slice(0, 100);
+    if (t.length < 2) return;
+    setRecent((prev) => {
+      const next = [t, ...prev.filter((s) => s.toLowerCase() !== t.toLowerCase())].slice(0, 6);
+      try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
 
   const runSearch = useCallback(async (q: string) => {
     if (q.trim().length < 2) {
@@ -51,12 +87,13 @@ export function SearchPageClient() {
       if (!res.ok) throw new Error(data.error || "Search failed");
       setResults({ ...EMPTY, ...data });
       setSearched(true);
+      remember(q);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Search failed");
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [remember]);
 
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
@@ -67,7 +104,8 @@ export function SearchPageClient() {
   const total =
     results.people.length + results.posts.length + results.communities.length +
     results.events.length + results.buildings.length + results.clubs.length +
-    results.videos.length + results.blogs.length;
+    results.videos.length + results.reels.length + results.blogs.length +
+    results.studyMaterials.length + results.announcements.length;
 
   const show = (t: Tab) => tab === "all" || tab === t;
 
@@ -75,7 +113,7 @@ export function SearchPageClient() {
     <div className="mx-auto w-full max-w-3xl space-y-4 px-3 pb-6 pt-4 sm:px-4">
       <div>
         <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Search</h1>
-        <p className="text-sm text-muted-foreground">People, posts, communities, videos, events, clubs, buildings, and stories.</p>
+        <p className="text-sm text-muted-foreground">People, posts, communities, events, clubs, buildings, videos, reels, blogs, announcements, and study materials.</p>
       </div>
       <div className="relative">
         <SearchIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
@@ -106,7 +144,10 @@ export function SearchPageClient() {
             { value: "events", label: "Events" },
             { value: "campus", label: "Campus" },
             { value: "videos", label: "Videos" },
+            { value: "reels", label: "Reels" },
             { value: "blogs", label: "Stories" },
+            { value: "study", label: "Study" },
+            { value: "announcements", label: "Notices" },
           ]}
         />
       )}
@@ -117,12 +158,36 @@ export function SearchPageClient() {
       {!searched && !isLoading && (
         <div className="dyne-card">
           <EmptyState icon={SearchIcon} title="Search the entire campus network" description="Type at least 2 characters. Try a classmate's name, a club, an event, or a keyword like “robotics”." />
+          {recent.length > 0 && (
+            <div className="mt-4 border-t border-border pt-4">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recent searches</p>
+                <button
+                  onClick={() => { setRecent([]); try { localStorage.removeItem(RECENT_KEY); } catch { /* ignore */ } }}
+                  className="min-h-[44px] rounded-lg px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {recent.map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setQuery(r)}
+                    className="min-h-[44px] rounded-full border border-border px-3.5 text-sm hover:bg-muted"
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {searched && !isLoading && total === 0 && (
         <div className="dyne-card">
-          <EmptyState icon={SearchIcon} title={`No results for “${query.trim()}”`} description="Try a different name or keyword. Searches cover people, posts, communities, events, clubs, buildings, videos, and stories." />
+          <EmptyState icon={SearchIcon} title={`No results for “${query.trim()}”`} description="Try a different name or keyword. Searches cover people, posts, communities, events, clubs, buildings, videos, stories, and study materials." />
         </div>
       )}
 
@@ -196,9 +261,22 @@ export function SearchPageClient() {
       {show("videos") && results.videos.length > 0 && (
         <Section title="Videos">
           {results.videos.map((v) => (
-            <Link key={v.id} href={`/watch/${v.id}`} className="block min-h-[44px] rounded-xl px-2 py-2 hover:bg-muted">
+            <Link key={v.id} href={`/videos/${v.id}`} className="block min-h-[44px] rounded-xl px-2 py-2 hover:bg-muted">
               <span className="block text-sm font-medium">{v.title}</span>
               <span className="block text-xs text-muted-foreground">{v.view_count} views</span>
+            </Link>
+          ))}
+        </Section>
+      )}
+
+      {show("reels") && results.reels.length > 0 && (
+        <Section title="Reels">
+          {results.reels.map((r) => (
+            <Link key={r.id} href={`/reels/${r.id}`} className="block min-h-[44px] rounded-xl px-2 py-2 hover:bg-muted">
+              <span className="block text-sm font-medium">{r.title}</span>
+              <span className="block text-xs text-muted-foreground">
+                {r.view_count.toLocaleString()} views{r.category ? ` · ${r.category}` : ""}
+              </span>
             </Link>
           ))}
         </Section>
@@ -210,6 +288,33 @@ export function SearchPageClient() {
             <Link key={b.id} href={`/blogs/${b.slug}`} className="block min-h-[44px] rounded-xl px-2 py-2 hover:bg-muted">
               <span className="block text-sm font-medium">{b.title}</span>
               {b.excerpt && <span className="dyne-line-2 block text-sm text-muted-foreground">{b.excerpt}</span>}
+            </Link>
+          ))}
+        </Section>
+      )}
+
+      {(show("announcements") || tab === "all") && results.announcements.length > 0 && (
+        <Section title="Announcements">
+          {results.announcements.map((a) => (
+            <Link key={a.id} href="/announcements" className="block min-h-[44px] rounded-xl px-2 py-2 hover:bg-muted">
+              <span className="block text-sm font-medium">
+                {a.is_pinned ? "📌 " : ""}
+                {a.title}
+              </span>
+              <span className="dyne-line-2 block text-xs text-muted-foreground">{a.body}</span>
+            </Link>
+          ))}
+        </Section>
+      )}
+
+      {(show("study") || tab === "all") && results.studyMaterials.length > 0 && (
+        <Section title="Study materials">
+          {results.studyMaterials.map((m) => (
+            <Link key={m.id} href="/study-materials" className="block min-h-[44px] rounded-xl px-2 py-2 hover:bg-muted">
+              <span className="block text-sm font-medium">{m.title}</span>
+              <span className="block text-xs text-muted-foreground">
+                {[m.subject, m.classGrade].filter(Boolean).join(" · ") || "Study material"}
+              </span>
             </Link>
           ))}
         </Section>

@@ -15,7 +15,7 @@ export async function listBuildings(db: Db, search?: string, limit = 50, cursor?
   if (cursor) filter.name = { $gt: cursor };
   const rows = await col<BuildingDoc>(db, "buildings")
     .find(filter as never)
-    .sort({ name: 1 })
+    .sort({ name: 1, _id: 1 })
     .limit(safeLimit(limit, 100))
     .toArray();
   return serializeMany(rows);
@@ -36,7 +36,7 @@ export async function listClubs(
   if (opts.cursor) filter.name = { $gt: opts.cursor };
   const rows = await col<ClubDoc>(db, "clubs")
     .find(filter as never)
-    .sort({ name: 1 })
+    .sort({ name: 1, _id: 1 })
     .limit(safeLimit(opts.limit ?? 50, 100))
     .toArray();
   const categories = await col<ClubDoc>(db, "clubs").distinct("category", {});

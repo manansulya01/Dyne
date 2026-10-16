@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import { X } from "lucide-react";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -165,7 +168,11 @@ function EventCard({ event, currentUserId, onRSVP }: { event: EventData; current
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <CardTitle className="text-lg">{event.title}</CardTitle>
+            <CardTitle className="text-lg">
+              <Link href={`/events/${event.id}`} className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-primary">
+                {event.title}
+              </Link>
+            </CardTitle>
             <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Calendar className="h-4 w-4" />
@@ -181,7 +188,7 @@ function EventCard({ event, currentUserId, onRSVP }: { event: EventData; current
           </div>
           {event.image_url && (
             <div className="relative h-20 w-32 shrink-0 rounded-lg overflow-hidden">
-              <Image src={event.image_url} alt="" fill className="object-cover" />
+              <Image src={event.image_url} alt="" fill sizes="128px" className="object-cover" />
             </div>
           )}
         </div>
@@ -290,17 +297,30 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // Escape closes, background scroll locks, focus is trapped and restored.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogA11y(true, onClose, dialogRef);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-background rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose} aria-hidden="true">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create event"
+        className="bg-background rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[90svh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold">Create Event</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
+          <button onClick={onClose} aria-label="Close" className="flex min-h-[44px] min-w-[44px] items-center justify-center text-muted-foreground hover:text-foreground"><X className="h-5 w-5" aria-hidden="true" /></button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1">Title</label>
+            <label htmlFor="event-title" className="block text-sm font-medium mb-1">Title</label>
             <input
+              id="event-title"
               type="text"
               name="title"
               value={formData.title}
@@ -311,8 +331,9 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Description (optional)</label>
+            <label htmlFor="event-description" className="block text-sm font-medium mb-1">Description (optional)</label>
             <textarea
+              id="event-description"
               name="description"
               value={formData.description}
               onChange={e => setFormData({ ...formData, description: e.target.value })}
@@ -323,8 +344,9 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium mb-1">Start Time</label>
+              <label htmlFor="event-start" className="block text-sm font-medium mb-1">Start Time</label>
               <input
+                id="event-start"
                 type="datetime-local"
                 name="startTime"
                 value={formData.startTime}
@@ -334,8 +356,9 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">End Time</label>
+              <label htmlFor="event-end" className="block text-sm font-medium mb-1">End Time</label>
               <input
+                id="event-end"
                 type="datetime-local"
                 name="endTime"
                 value={formData.endTime}
@@ -361,8 +384,9 @@ function CreateEventModal({ onClose }: { onClose: () => void }) {
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium mb-1">Max Attendees (optional)</label>
+              <label htmlFor="event-max" className="block text-sm font-medium mb-1">Max Attendees (optional)</label>
               <input
+                id="event-max"
                 type="number"
                 name="maxAttendees"
                 value={formData.maxAttendees}

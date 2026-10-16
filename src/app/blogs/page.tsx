@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import LandingNav from "@/components/landing/LandingNav";
 import LandingFooter from "@/components/landing/LandingFooter";
+import { formatDate, readingTime } from "@/lib/utils";
+import { getDb } from "@/lib/mongo/client";
+import { listBlogs } from "@/lib/db/content";
 
 export const metadata: Metadata = {
   title: "Campus stories — Dyne Blogs",
@@ -13,6 +16,7 @@ interface Blog {
   slug: string;
   title: string;
   excerpt: string | null;
+  content?: string | null;
   coverImageUrl?: string | null;
   cover_image_url?: string | null;
   category: string | null;
@@ -21,12 +25,13 @@ interface Blog {
 }
 
 async function fetchBlogs(): Promise<Blog[]> {
-  const base = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+  // Direct database read: server components must not self-fetch over HTTP
+  // (breaks on non-default ports/proxies and adds a failure mode). The API
+  // route remains for client-side consumers.
   try {
-    const res = await fetch(`${base}/api/blogs?limit=30`, { next: { revalidate: 60 } });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.blogs ?? [];
+    const db = await getDb();
+    const rows = await listBlogs(db, { limit: 30 });
+    return rows as unknown as Blog[];
   } catch {
     return [];
   }
@@ -55,6 +60,13 @@ export default async function BlogsPage() {
           Featured stories, latest articles, and announcements — published through official MVA
           workflows. Nothing here is hardcoded: every article is real data with an author and date.
         </p>
+        {/* Reachable from the app sidebar, so offer a clear way back into Dyne. */}
+        <Link
+          href="/feed"
+          className="mt-6 inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-white/15 px-4 py-2 text-sm font-semibold text-zinc-200 transition-colors hover:border-cyan-300/40 hover:text-white focus-visible:outline-2 focus-visible:outline-cyan-300"
+        >
+          Back to Dyne
+        </Link>
 
         {categories.length > 0 && (
           <div className="mt-6 flex flex-wrap gap-2" aria-label="Categories">
@@ -87,7 +99,10 @@ export default async function BlogsPage() {
               <span className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">Featured story{featured.category ? ` · ${featured.category}` : ""}</span>
               <span className="mt-2 block text-2xl font-extrabold tracking-tight group-hover:underline sm:text-3xl">{featured.title}</span>
               {featured.excerpt && <span className="mt-2 block max-w-3xl text-zinc-400">{featured.excerpt}</span>}
-              <span className="mt-3 block text-sm text-zinc-500">By {authorName(featured)}</span>
+              <span className="mt-3 block text-sm text-zinc-500">
+                By {authorName(featured)}
+                {featured.publishedAt ? ` · ${formatDate(featured.publishedAt)}` : ""} · {readingTime(featured.content)}
+              </span>
             </span>
           </Link>
         )}
@@ -104,7 +119,10 @@ export default async function BlogsPage() {
                   {b.category && <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-cyan-300">{b.category}</span>}
                   <span className="mt-1.5 block font-bold leading-snug group-hover:underline">{b.title}</span>
                   {b.excerpt && <span className="mt-1.5 line-clamp-2 block text-sm text-zinc-400">{b.excerpt}</span>}
-                  <span className="mt-3 block text-xs text-zinc-500">By {authorName(b)}</span>
+                  <span className="mt-3 block text-xs text-zinc-500">
+                    By {authorName(b)}
+                    {b.publishedAt ? ` · ${formatDate(b.publishedAt)}` : ""} · {readingTime(b.content)}
+                  </span>
                 </span>
               </Link>
             ))}

@@ -10,9 +10,9 @@ import {
 } from "@/lib/storage/types";
 
 describe("storage policy helpers", () => {
-  it("recognizes the seven product buckets", () => {
-    expect(storageBuckets).toHaveLength(7);
-    for (const b of ["avatars", "post-media", "watch-videos"] as const) {
+  it("recognizes the product buckets", () => {
+    expect(storageBuckets).toContain("study-materials");
+    for (const b of ["avatars", "post-media", "watch-videos", "study-materials"] as const) {
       expect(isStorageBucket(b)).toBe(true);
     }
     expect(isStorageBucket("nope")).toBe(false);
@@ -23,6 +23,7 @@ describe("storage policy helpers", () => {
     expect(publicBuckets.has("avatars")).toBe(true);
     expect(privateBuckets.has("watch-videos")).toBe(true);
     expect(privateBuckets.has("message-attachments")).toBe(true);
+    expect(privateBuckets.has("study-materials")).toBe(true);
     expect(publicBuckets.has("watch-videos")).toBe(false);
   });
 

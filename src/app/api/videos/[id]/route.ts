@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes, col, type VideoDoc } from "@/lib/mongo/collections";
 import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
-import { deleteVideo, getVideo, isSafeMediaUrl, recordVideoView } from "@/lib/db/videos";
+import {
+  deleteVideo,
+  getVideo,
+  isSafeMediaUrl,
+  recordVideoView,
+  toggleVideoLike,
+} from "@/lib/db/videos";
 import { toVideoJSON } from "@/lib/db/contracts";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { getSessionUser, requireSessionUser, toHttpError } from "@/lib/auth/session"
+import { hasPermission, isAdminRole } from "@/lib/permissions";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -25,24 +33,40 @@ async function authed(rawId: string) {
   }
 }
 
-export async function GET(_request: Request, { params }: Params) {
-  const { id } = await params;
-  const ctx = await authed(id);
-  if ("error" in ctx) return ctx.error;
-  const { db, user } = ctx;
+/** A video is readable when approved (or legacy, pre-moderation), or by its owner / moderator. */
+function canViewVideo(status: string, creatorId: string, viewer: { id: string; role: string } | null): boolean {
+  if (status === "approved") return true;
+  if (!viewer) return false;
+  if (viewer.id === creatorId) return true;
+  return hasPermission(viewer.role as never, "videos.moderate");
+}
 
-  const video = await getVideo(db, id);
+export async function GET(request: Request, { params }: Params) {
+  const { id } = await params;
+  const db = await getDb();
+  await ensureIndexes(db);
+
+  if (!objectIdSchema.safeParse(id).success) {
+    return NextResponse.json({ error: "Video not found" }, { status: 404 });
+  }
+  const user = await getSessionUser(db);
+
+  const video = await getVideo(db, id, user?.id);
   if (!video) {
     return NextResponse.json({ error: "Video not found" }, { status: 404 });
   }
+  const status = String(video.moderationStatus ?? "approved");
+  if (!canViewVideo(status, String(video.creatorId), user)) {
+    return NextResponse.json({ error: "Video not found" }, { status: 404 });
+  }
 
-  const viewed = await recordVideoView(db, id, user.id);
-  const viewCount =
-    viewed.ok && "viewCount" in viewed
-      ? viewed.viewCount
-      : (video as unknown as Record<string, unknown>).viewCount ??
-        (video as unknown as Record<string, unknown>).view_count ??
-        0;
+  // Only count a view for approved videos the viewer can actually watch, and
+  // keep the original request shape the Watch player depends on.
+  let viewCount = Number(video.viewCount ?? 0);
+  if (user && status === "approved") {
+    const viewed = await recordVideoView(db, id, user.id);
+    if (viewed.ok) viewCount = viewed.viewCount;
+  }
 
   return NextResponse.json({
     video: {
@@ -50,6 +74,30 @@ export async function GET(_request: Request, { params }: Params) {
       view_count: viewCount,
     },
   });
+}
+
+const likeSchema = z.object({ action: z.enum(["like", "unlike"]) });
+
+/** Idempotent like target-state (race-safe against rapid taps). */
+export async function POST(request: Request, { params }: Params) {
+  const { id } = await params;
+  const ctx = await authed(id);
+  if ("error" in ctx) return ctx.error;
+  const { db, user } = ctx;
+
+  const body = await request.json().catch(() => ({}));
+  const validated = likeSchema.safeParse(body);
+  if (!validated.success) {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+  const wantsLiked = validated.data.action === "like";
+
+  let result = await toggleVideoLike(db, id, user.id);
+  if (!result.ok) return NextResponse.json({ error: "Video not found" }, { status: 404 });
+  if (result.liked !== wantsLiked) {
+    result = await toggleVideoLike(db, id, user.id);
+  }
+  return NextResponse.json({ liked: result.liked, like_count: result.likeCount });
 }
 
 export async function PATCH(request: Request, { params }: Params) {
@@ -63,7 +111,7 @@ export async function PATCH(request: Request, { params }: Params) {
   if (!video) {
     return NextResponse.json({ error: "Video not found" }, { status: 404 });
   }
-  if (!video.creatorId.equals(toObjectId(user.id)) && user.role !== "admin") {
+  if (!video.creatorId.equals(toObjectId(user.id)) && !isAdminRole(user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

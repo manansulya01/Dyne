@@ -5,9 +5,9 @@ import { col, ensureIndexes, collectionNames } from "@/lib/mongo/collections";
 import { createUser } from "@/lib/db/users";
 import {
   createBlog, listBlogs, getBlogBySlug, updateBlog, deleteBlog,
-  createAnnouncement, listAnnouncements,
   upsertTimetableEntry, listTimetable, clearTimetable,
 } from "@/lib/db/content";
+import { createAnnouncement, listAnnouncements } from "@/lib/db/announcements";
 import { createCommunity, joinCommunity } from "@/lib/db/communities";
 import { createPoll, listPolls, votePoll } from "@/lib/db/polls";
 
@@ -84,6 +84,56 @@ describe("dyne 2.0 content: blogs, announcements, timetable", () => {
     expect(after).toHaveLength(2);
     await clearTimetable(db);
     expect(await listTimetable(db)).toHaveLength(0);
+  });
+
+  it("never lists a targeted announcement to students outside its audience", async () => {
+    const db = await getDb();
+    const staff = await makeUser("ann_staff");
+    const grade9 = await makeUser("ann_g9");
+    const grade10 = await makeUser("ann_g10");
+    await col(db, "users").updateOne({ _id: staff } as never, { $set: { role: "teacher" } });
+    await col(db, "users").updateOne({ _id: grade9 } as never, { $set: { classGrade: "Grade 9" } });
+    await col(db, "users").updateOne({ _id: grade10 } as never, { $set: { classGrade: "Grade 10" } });
+
+    const campus = await createAnnouncement(db, staff, {
+      title: "Campus wide notice",
+      body: "Everyone should read this.",
+      audience: "all",
+    });
+    const targeted = await createAnnouncement(db, staff, {
+      title: "Grade 9 only",
+      body: "Only Grade 9 needs to read this.",
+      audience: "students",
+      audienceClassGrade: "Grade 9",
+    });
+    expect(campus.ok && targeted.ok).toBe(true);
+
+    const titlesFor = async (id: unknown) =>
+      (await listAnnouncements(db, { viewerRole: "student", viewerId: String(id) })).map((a) =>
+        String((a as unknown as { title: string }).title)
+      );
+
+    const g9 = await titlesFor(grade9);
+    expect(g9).toContain("Campus wide notice");
+    expect(g9).toContain("Grade 9 only");
+
+    // The whole point: a Grade 10 student must not see the Grade 9 notice,
+    // even though it is already published.
+    const g10 = await titlesFor(grade10);
+    expect(g10).toContain("Campus wide notice");
+    expect(g10).not.toContain("Grade 9 only");
+
+    // Anonymous visitors only ever see campus-wide announcements.
+    const anon = (await listAnnouncements(db)).map((a) =>
+      String((a as unknown as { title: string }).title)
+    );
+    expect(anon).toEqual(["Campus wide notice"]);
+
+    // Staff keep the wider teaching audiences.
+    const staffView = (await listAnnouncements(db, { viewerRole: "teacher", viewerId: String(staff) })).map(
+      (a) => String((a as unknown as { title: string }).title)
+    );
+    expect(staffView).toContain("Grade 9 only");
   });
 
   it("runs community polls with one vote per member", async () => {

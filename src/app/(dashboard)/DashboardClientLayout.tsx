@@ -8,28 +8,61 @@ import { Button } from "@/components/ui/Button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/Avatar";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/DropdownMenu";
 import { useTheme } from "@/components/theme/ThemeProvider";
+import { CommandPalette } from "@/components/nav/CommandPalette";
 import {
   House,
+  LayoutDashboard,
+  ListTodo,
+  ClipboardList,
+  ClipboardCheck,
+  GraduationCap,
+  NotebookPen,
+  Target,
+  Flame,
+  Timer,
+  BarChart3,
   Compass,
   Users,
-  MessageSquare,
+  MessagesSquare,
   CalendarDays,
   Building2,
   Clapperboard,
+  PlaySquare,
+  Images,
+  Megaphone,
   Search,
   Bell,
   Settings,
   ShieldCheck,
+  ShieldAlert,
+  School,
+  Library,
+  FileBarChart,
   Menu,
   X,
   Newspaper,
   CalendarClock,
+  BookOpen,
+  MessageSquareWarning,
   Moon,
   Sun,
   Monitor,
   ChevronsLeft,
   ChevronsRight,
+  Bookmark,
+  CalendarPlus,
 } from "lucide-react";
+import { navGroupsForRole, mobileNavForRole, type NavIconMap } from "@/lib/nav";
+import { hasPermission } from "@/lib/permissions";
+
+const ICONS: NavIconMap = {
+  House, LayoutDashboard, ListTodo, ClipboardList, ClipboardCheck, GraduationCap,
+  NotebookPen, Target, Flame, Timer, BarChart3, Compass, Users, MessagesSquare,
+  CalendarDays, Building2, Clapperboard, PlaySquare, Images, Megaphone, Search,
+  Bell, Settings, ShieldCheck, ShieldAlert, School, Library, FileBarChart, Menu,
+  X, Newspaper, CalendarClock, BookOpen, MessageSquareWarning, Moon, Sun, Monitor,
+  ChevronsLeft, ChevronsRight, Bookmark, CalendarPlus,
+};
 
 interface DashboardClientLayoutProps {
   profile: {
@@ -42,26 +75,24 @@ interface DashboardClientLayoutProps {
   children: React.ReactNode;
 }
 
-const PRIMARY_NAV = [
-  { name: "Home", href: "/feed", icon: House },
-  { name: "Explore", href: "/explore", icon: Compass },
-  { name: "Communities", href: "/communities", icon: Users },
-  { name: "Messages", href: "/chat", icon: MessageSquare },
-  { name: "Events", href: "/events", icon: CalendarDays },
-  { name: "Campus", href: "/campus", icon: Building2 },
-  { name: "Watch", href: "/watch", icon: Clapperboard },
-  { name: "Schedule", href: "/schedule", icon: CalendarClock },
-  { name: "Blogs", href: "/blogs", icon: Newspaper },
-  { name: "Search", href: "/search", icon: Search },
-];
-
-const MOBILE_NAV = [
-  { name: "Home", href: "/feed", icon: House },
-  { name: "Explore", href: "/explore", icon: Compass },
-  { name: "Messages", href: "/chat", icon: MessageSquare },
-  { name: "Events", href: "/events", icon: CalendarDays },
-  { name: "Watch", href: "/watch", icon: Clapperboard },
-];
+/** Contextual search placeholder per section (top bar stays clean). */
+export function searchPlaceholderFor(pathname: string): string {
+  if (pathname.startsWith("/schedule") || pathname.startsWith("/timetable") || pathname.startsWith("/calendar") || pathname.startsWith("/dashboard"))
+    return "Search tasks, courses, notes…";
+  if (pathname.startsWith("/feed") || pathname.startsWith("/communities") || pathname.startsWith("/people") || pathname.startsWith("/explore"))
+    return "Search posts, people, communities…";
+  if (pathname.startsWith("/campus") || pathname.startsWith("/events") || pathname.startsWith("/mva-events"))
+    return "Search campus, events, clubs…";
+  if (pathname.startsWith("/study-materials") || pathname.startsWith("/blogs")) return "Search study materials, blogs…";
+  if (pathname.startsWith("/videos") || pathname.startsWith("/watch")) return "Search campus videos…";
+  if (pathname.startsWith("/reels")) return "Search reels…";
+  if (pathname.startsWith("/stories")) return "Search stories…";
+  if (pathname.startsWith("/teacher") || pathname.startsWith("/reports"))
+    return "Search students, assignments, exams…";
+  if (pathname.startsWith("/admin")) return "Search users and content…";
+  if (pathname.startsWith("/chat")) return "Search spaces and messages…";
+  return "Search Dyne…";
+}
 
 function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(href + "/");
@@ -70,15 +101,34 @@ function isActive(pathname: string, href: string) {
 export function DashboardClientLayout({ profile, children }: DashboardClientLayoutProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  // Lazy init avoids a mount-time setState cascade (lint: set-state-in-effect).
-  const [collapsed, setCollapsed] = useState(() => {
-    try {
-      return typeof window !== "undefined" && localStorage.getItem("dyne-sidebar-collapsed") === "1";
-    } catch {
-      return false;
-    }
-  });
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Hydration-safe: SSR and the first client render both use `false` so the
+  // sidebar width is deterministic. The persisted preference is applied in a
+  // mount effect below (after hydration), avoiding a server/client mismatch
+  // when localStorage says the sidebar was collapsed.
+  const [collapsed, setCollapsed] = useState(false);
   const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    // Restore the persisted sidebar preference after hydration.
+    try {
+      if (localStorage.getItem("dyne-sidebar-collapsed") === "1") {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setCollapsed(true);
+      }
+    } catch { /* private mode — leave expanded */ }
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,6 +142,35 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
     })();
     return () => { cancelled = true; };
   }, [pathname]);
+
+  // Mobile drawer: Escape closes it and background scroll is locked while open
+  // (the role="dialog" markup alone gave no keyboard/scroll containment).
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileOpen]);
+
+  // Role-aware navigation. The same permission check the API uses decides what
+  // is shown here — hiding a link is convenience, never the security boundary.
+  const navGroups = navGroupsForRole(
+    profile?.role,
+    (permission) => hasPermission(profile?.role as never, permission as never),
+    ICONS
+  );
+  const mobileNav = mobileNavForRole(
+    profile?.role,
+    (permission) => hasPermission(profile?.role as never, permission as never),
+    ICONS
+  );
 
   const toggleCollapsed = () => {
     setCollapsed((c) => {
@@ -123,44 +202,53 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
             )}
           </Link>
           {!collapsed && (
-            <button onClick={toggleCollapsed} aria-label="Collapse sidebar" className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
+            <button onClick={toggleCollapsed} aria-label="Collapse sidebar" className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
               <ChevronsLeft className="h-5 w-5" />
             </button>
           )}
         </div>
 
-        <nav className="dyne-scroll flex-1 space-y-1 overflow-y-auto px-3 py-3" aria-label="Main navigation">
-          {PRIMARY_NAV.map((item) => {
-            const active = isActive(pathname, item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                title={collapsed ? item.name : undefined}
-                className={cn(
-                  "group flex min-h-[44px] items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors",
-                  collapsed && "justify-center px-0",
-                  active ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                )}
-              >
-                <span className={cn("flex h-8 w-8 items-center justify-center rounded-lg", active ? "bg-primary text-primary-foreground" : "bg-transparent group-hover:bg-card")}>
-                  <item.icon className="h-[18px] w-[18px]" aria-hidden="true" />
-                </span>
-                {!collapsed && <span className="truncate">{item.name}</span>}
-                {!collapsed && item.href === "/notifications" && unread > 0 && (
-                  <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">{unread}</span>
-                )}
-              </Link>
-            );
-          })}
-          <div className={cn("pt-2", !collapsed && "px-1")}>
-            {!collapsed && <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">You</p>}
-            <SidebarLink pathname={pathname} href="/notifications" icon={Bell} label="Notifications" collapsed={collapsed} badge={unread} />
-            <SidebarLink pathname={pathname} href="/people" icon={Users} label="People" collapsed={collapsed} />
-            <SidebarLink pathname={pathname} href="/settings" icon={Settings} label="Settings" collapsed={collapsed} />
-            {profile?.role === "admin" && (
-              <SidebarLink pathname={pathname} href="/admin" icon={ShieldCheck} label="Admin" collapsed={collapsed} />
+        <nav className="dyne-scroll flex-1 space-y-4 overflow-y-auto px-3 py-3" aria-label="Main navigation">
+          {navGroups.map((group) => (
+            <div key={group.label}>
+              {!collapsed && (
+                <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{group.label}</p>
+              )}
+              <div className="space-y-1">
+                {group.items.map((item) => {
+                  const active = isActive(pathname, item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      aria-current={active ? "page" : undefined}
+                      title={collapsed ? item.name : undefined}
+                      className={cn(
+                        "group flex min-h-[44px] items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors",
+                        collapsed && "justify-center px-0",
+                        active ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      )}
+                    >
+                      <span className={cn("flex h-8 w-8 items-center justify-center rounded-lg", active ? "bg-primary text-primary-foreground" : "bg-transparent group-hover:bg-card")}>
+                        <item.icon className="h-[18px] w-[18px]" aria-hidden="true" />
+                      </span>
+                      {!collapsed && <span className="truncate">{item.name}</span>}
+                      {!collapsed && item.href === "/notifications" && unread > 0 && (
+                        <span className="ml-auto rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">{unread}</span>
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <div className={cn("pt-1", !collapsed && "px-1")}>
+            {!collapsed && <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Workspace</p>}
+            {profile?.role === "admin" || profile?.role === "super_admin" ? (
+              <SidebarLink pathname={pathname} href="/admin" icon={ShieldCheck} label="Admin Console" collapsed={collapsed} />
+            ) : null}
+            {profile?.username && (
+              <SidebarLink pathname={pathname} href={`/profile/${profile.username}`} icon={Users} label="My Profile" collapsed={collapsed} />
             )}
           </div>
         </nav>
@@ -190,30 +278,36 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <nav className="flex-1 space-y-1 overflow-y-auto p-3" aria-label="Mobile navigation">
-              {[...PRIMARY_NAV,
-                { name: "Notifications", href: "/notifications", icon: Bell },
-                { name: "People", href: "/people", icon: Users },
-                { name: "Settings", href: "/settings", icon: Settings },
-                ...(profile?.role === "admin" ? [{ name: "Admin", href: "/admin", icon: ShieldCheck }] : []),
-              ].map((item) => {
-                const active = isActive(pathname, item.href);
-                return (
-                  <Link
-                    key={item.href + item.name}
-                    href={item.href}
-                    onClick={() => setMobileOpen(false)}
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "flex min-h-[48px] items-center gap-3 rounded-xl px-3 text-[15px] font-medium",
-                      active ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                    )}
-                  >
-                    <item.icon className="h-5 w-5" aria-hidden="true" />
-                    {item.name}
-                  </Link>
-                );
-              })}
+            <nav className="flex-1 space-y-4 overflow-y-auto p-3" aria-label="Mobile navigation">
+              {[...navGroups,
+                { label: "Workspace", items: [
+                  ...(profile?.username ? [{ name: "My Profile", href: `/profile/${profile.username}`, icon: Users }] : []),
+                ] },
+              ].map((group) => (
+                <div key={group.label}>
+                  <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{group.label}</p>
+                  <div className="space-y-1">
+                    {group.items.map((item) => {
+                      const active = isActive(pathname, item.href);
+                      return (
+                        <Link
+                          key={item.href + item.name}
+                          href={item.href}
+                          onClick={() => setMobileOpen(false)}
+                          aria-current={active ? "page" : undefined}
+                          className={cn(
+                            "flex min-h-[48px] items-center gap-3 rounded-xl px-3 text-[15px] font-medium",
+                            active ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
+                        >
+                          <item.icon className="h-5 w-5" aria-hidden="true" />
+                          {item.name}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </nav>
             <div className="border-t border-border p-3">
               <ProfileFooter profile={profile} />
@@ -224,12 +318,18 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
 
       {/* Content column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header profile={profile} unread={unread} onMenu={() => setMobileOpen(true)} />
-        <main className="dyne-scroll min-h-0 flex-1 overflow-y-auto pb-24 md:pb-10">{children}</main>
+        <a
+          href="#dyne-main"
+          className="sr-only z-[60] rounded bg-primary px-4 py-2 font-medium text-primary-foreground focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
+        >
+          Skip to main content
+        </a>
+        <Header profile={profile} unread={unread} onMenu={() => setMobileOpen(true)} onPalette={() => setPaletteOpen(true)} />
+        <main id="dyne-main" tabIndex={-1} className="dyne-scroll min-h-0 flex-1 overflow-y-auto pb-24 md:pb-10">{children}</main>
         {/* Mobile bottom navigation */}
         <nav aria-label="Mobile primary" className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
-          <div className="grid grid-cols-5">
-            {MOBILE_NAV.map((item) => {
+          <div className="grid" style={{ gridTemplateColumns: `repeat(${mobileNav.length || 5}, minmax(0, 1fr))` }}>
+            {mobileNav.map((item) => {
               const active = isActive(pathname, item.href);
               return (
                 <Link
@@ -249,6 +349,8 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
           </div>
         </nav>
       </div>
+      {/* Mounted fresh on every open so query/results/cursor always start clean. */}
+      {paletteOpen && <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} role={profile?.role} username={profile?.username} />}
     </div>
   );
 }
@@ -306,8 +408,11 @@ function ProfileFooter({ profile }: { profile: DashboardClientLayoutProps["profi
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuItem asChild><Link href={`/profile/${profile.username}`} className="flex min-h-[44px] w-full items-center">View profile</Link></DropdownMenuItem>
         <DropdownMenuItem asChild><Link href="/settings" className="flex min-h-[44px] w-full items-center">Settings</Link></DropdownMenuItem>
-        {profile.role === "admin" && (
+        {(profile.role === "admin" || profile.role === "super_admin") && (
           <DropdownMenuItem asChild><Link href="/admin" className="flex min-h-[44px] w-full items-center gap-2"><ShieldCheck className="h-4 w-4" /> Admin</Link></DropdownMenuItem>
+        )}
+        {hasPermission(profile.role as never, "assignments.create") && (
+          <DropdownMenuItem asChild><Link href="/teacher" className="flex min-h-[44px] w-full items-center gap-2"><School className="h-4 w-4" /> Teaching</Link></DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem className="flex min-h-[44px] cursor-pointer items-center text-destructive focus:text-destructive" onSelect={(e) => { e.preventDefault(); logout(); }}>
@@ -318,7 +423,9 @@ function ProfileFooter({ profile }: { profile: DashboardClientLayoutProps["profi
   );
 }
 
-function Header({ profile, unread, onMenu }: { profile: DashboardClientLayoutProps["profile"]; unread: number; onMenu: () => void }) {
+function Header({ profile, unread, onMenu, onPalette }: { profile: DashboardClientLayoutProps["profile"]; unread: number; onMenu: () => void; onPalette: () => void }) {
+  const pathname = usePathname();
+  const placeholder = searchPlaceholderFor(pathname ?? "/feed");
   const { theme, update, hydrated } = useTheme();
   const [mounted, setMounted] = useState(false);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration gate; no external subscription
@@ -346,7 +453,15 @@ function Header({ profile, unread, onMenu }: { profile: DashboardClientLayoutPro
           <span className="font-bold tracking-tight">Dyne</span>
         </Link>
         <div className="hidden flex-1 md:block">
-          <GlobalSearchBox />
+          <button
+            onClick={onPalette}
+            className="mx-auto flex min-h-[44px] w-full max-w-xl items-center gap-2 rounded-xl border border-border bg-card px-3 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label="Open command palette"
+          >
+            <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="flex-1 text-left">{placeholder}</span>
+            <kbd className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-[11px]">⌘K</kbd>
+          </button>
         </div>
         <div className="ml-auto flex items-center gap-1">
           <button onClick={cycleMode} aria-label={`Theme: ${theme.mode}. Activate to switch.`} title={`Theme: ${theme.mode}`} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground">

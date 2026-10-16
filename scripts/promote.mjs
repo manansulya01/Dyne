@@ -14,7 +14,7 @@ if (!email || !role) {
   console.error("Usage: node scripts/promote.mjs <email> <role>");
   process.exit(2);
 }
-if (!["student", "teacher", "staff", "club", "admin"].includes(role)) {
+if (!["student", "teacher", "staff", "club", "moderator", "admin", "super_admin"].includes(role)) {
   console.error(`Invalid role: ${role}`);
   process.exit(2);
 }

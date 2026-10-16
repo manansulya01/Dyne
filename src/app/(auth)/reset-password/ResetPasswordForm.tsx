@@ -59,7 +59,10 @@ export default function ResetPasswordForm() {
       return;
     }
 
-    router.push("/login?reset=success");
+    // A token rotation ends the session, so the user signs in again. A forced
+    // rotation keeps a freshly issued session cookie and continues in-app.
+    router.push(token ? "/login?reset=success" : "/feed");
+    router.refresh();
   }
 
   return (

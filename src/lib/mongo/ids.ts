@@ -27,6 +27,17 @@ export function newId(): ObjectId {
   return new ObjectId();
 }
 
+/** Lenient parse: ObjectId or null (never throws). For audit/logging paths. */
+export function toObjectIdOrNull(value: unknown): ObjectId | null {
+  try {
+    if (value instanceof ObjectId) return value;
+    if (isObjectIdString(value)) return new ObjectId(value);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Current timestamp (single helper so created/updated handling stays uniform). */
 export function now(): Date {
   return new Date();

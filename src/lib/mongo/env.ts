@@ -46,7 +46,6 @@ export function getAuthSecret(): string {
       );
     }
     // Development/test fallback. Never used in production (throws above).
-    // eslint-disable-next-line no-console
     console.warn(
       "[dyne] AUTH_SECRET is not set; using an insecure development fallback. Set AUTH_SECRET for anything real."
     );

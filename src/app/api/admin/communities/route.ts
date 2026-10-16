@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes, col } from "@/lib/mongo/collections";
-import { objectIdSchema } from "@/lib/mongo/ids";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { toHttpError } from "@/lib/auth/session";
 import { parseLimitParam } from "@/lib/utils";
 import { requireAdminUser } from "../stats/route";
@@ -79,12 +79,12 @@ export async function PATCH(request: Request) {
 
   if (action === "moderate") {
     // Toggle private/public or other moderation
-    const community = await col(db, "communities").findOne({ _id: communityId } as never);
+    const community = await col(db, "communities").findOne({ _id: toObjectId(communityId) } as never);
     if (!community) {
       return NextResponse.json({ error: "Community not found" }, { status: 404 });
     }
     await col(db, "communities").updateOne(
-      { _id: communityId } as never,
+      { _id: toObjectId(communityId) } as never,
       { $set: { isPrivate: !community.isPrivate, updatedAt: new Date() } }
     );
     return NextResponse.json({ success: true, isPrivate: !community.isPrivate });

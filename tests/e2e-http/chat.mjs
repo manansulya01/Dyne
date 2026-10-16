@@ -1,4 +1,4 @@
-/** HTTP E2E: chat (DM create/dedup, send, history, gates, groups, polling shape). */
+/** HTTP E2E: community group chat (DMs disabled product-wide; groups only). */
 const BASE = process.env.APP_BASE || "http://127.0.0.1:3117";
 let pass = 0;
 let fail = 0;
@@ -62,27 +62,30 @@ const json = (o) => ({ headers: { "Content-Type": "application/json" }, body: JS
 const A = makeClient();
 const B = makeClient();
 const C = makeClient();
+const D = makeClient();
 await A.signup("chata@school.test", "chata_e2e", "ChatA");
 await B.signup("chatb@school.test", "chatb_e2e", "ChatB");
 await C.signup("chatc@school.test", "chatc_e2e", "ChatC");
+await D.signup("chatd@school.test", "chatd_e2e", "ChatD");
 const bid = (await B.req("GET", "/api/profile")).data?.profile?.id;
 const cid = (await C.req("GET", "/api/profile")).data?.profile?.id;
+const did = (await D.req("GET", "/api/profile")).data?.profile?.id;
 
-// DM create + dedup + validation.
+// Student-to-student DMs are disabled: direct creation always fails safely.
+// Community/group messaging is the supported path below.
 let convoId;
 {
-  const bad = await A.req("POST", "/api/chat/conversations", json({ participantIds: [], type: "direct" }));
+  const bad = await A.req("POST", "/api/chat/conversations", json({ participantIds: [], type: "group", name: "empty" }));
   check("empty participants 400", bad.status === 400, `status=${bad.status}`);
-  const r = await A.req("POST", "/api/chat/conversations", json({ participantIds: [bid], type: "direct" }));
-  check("DM created", r.status === 200 && !!r.data?.conversation?.id, `status=${r.status}`);
+  const dm = await A.req("POST", "/api/chat/conversations", json({ participantIds: [bid], type: "direct" }));
+  check("DM creation rejected 403", dm.status === 403, `status=${dm.status}`);
+  const dmAgain = await B.req("POST", "/api/chat/conversations", json({ participantIds: [(await A.req("GET", "/api/profile")).data?.profile?.id], type: "direct" }));
+  check("DM creation rejected for other side too", dmAgain.status === 403, `status=${dmAgain.status}`);
+  // Students need a real group (creator + 2): one-to-one chats are disabled DMs.
+  const r = await A.req("POST", "/api/chat/conversations", json({ participantIds: [bid, did], type: "group", name: "ChatA-B-D group" }));
+  check("group conversation created", r.status === 200 && !!r.data?.conversation?.id, `status=${r.status}`);
   convoId = r.data?.conversation?.id;
-  const again = await B.req("POST", "/api/chat/conversations", json({ participantIds: [(await A.req("GET", "/api/profile")).data?.profile?.id], type: "direct" }));
-  check(
-    "DM dedup returns same convo",
-    again.status === 200 && again.data?.conversation?.id === convoId,
-    `status=${again.status} ${again.data?.conversation?.id}`
-  );
-  const ghost = await A.req("POST", "/api/chat/conversations", json({ participantIds: ["507f1f77bcf86cd799439011"], type: "direct" }));
+  const ghost = await A.req("POST", "/api/chat/conversations", json({ participantIds: ["507f1f77bcf86cd799439011"], type: "group", name: "ghost" }));
   check("unknown user 404", ghost.status === 404, `status=${ghost.status}`);
 }
 
@@ -133,15 +136,15 @@ let convoId;
 
 // Groups: create, add, send.
 {
-  const g = await A.req("POST", "/api/chat/conversations", json({ participantIds: [bid], type: "group", name: "Study Group" }));
+  const g = await A.req("POST", "/api/chat/conversations", json({ participantIds: [bid, did], type: "group", name: "Study Group" }));
   check("group created", g.status === 200 && !!g.data?.conversation?.id, `status=${g.status}`);
   const gid = g.data?.conversation?.id;
   const add = await A.req("POST", `/api/chat/conversations/${gid}/members`, json({ userIds: [cid] }));
   check("member add ok", add.status === 200, `status=${add.status}`);
   const gm = await C.req("POST", `/api/chat/conversations/${gid}/messages`, json({ content: "Hello group", conversationId: gid }));
   check("new member sends ok", gm.status === 200, `status=${gm.status}`);
-  const direct = await A.req("POST", `/api/chat/conversations/${convoId}/members`, json({ userIds: [cid] }));
-  check("direct add rejected", direct.status === 400, `status=${direct.status}`);
+  const missing = await A.req("POST", "/api/chat/conversations/507f1f77bcf86cd799439011/members", json({ userIds: [cid] }));
+  check("member add to missing convo 404", missing.status === 404, `status=${missing.status}`);
 }
 
 // Conversation detail shape + rename by creator.
@@ -149,7 +152,7 @@ let convoId;
   const d = await A.req("GET", `/api/chat/conversations/${convoId}`);
   check(
     "detail shape",
-    d.status === 200 && Array.isArray(d.data?.conversation?.members) && d.data?.conversation?.members?.length === 2,
+    d.status === 200 && Array.isArray(d.data?.conversation?.members) && d.data?.conversation?.members?.length === 3,
     `status=${d.status}`
   );
 }

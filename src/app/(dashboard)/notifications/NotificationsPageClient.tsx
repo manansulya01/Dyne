@@ -40,7 +40,16 @@ function categoryOf(n: NotificationItem): Exclude<Category, "all"> {
     case "event_rsvp":
       return "events";
     case "moderation_action":
+    case "content_moderation":
       return "system";
+    case "assignment_published":
+    case "assignment_due":
+    case "assignment_overdue":
+    case "exam_published":
+    case "exam_result_released":
+    case "announcement":
+    case "content_published":
+      return "campus";
     default:
       return "campus";
   }
@@ -95,7 +104,8 @@ export function NotificationsPageClient() {
     }
   }, []);
 
-  usePolling(mergeNotifications, POLL_INTERVALS.notifications);
+  // The mount effect above already loaded the list; skip the duplicate first tick.
+  usePolling(mergeNotifications, POLL_INTERVALS.notifications, true, false);
 
   const markRead = async (id: string) => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n)));
@@ -115,17 +125,38 @@ export function NotificationsPageClient() {
     }).catch(() => {});
   };
 
+  // Deep links use the real ids carried in notification data; fall back to the
+  // relevant section (never a bare /feed) when an id is missing.
   const targetHref = (n: NotificationItem): string => {
-    const postId = n.data?.post_id;
-    if (typeof postId === "string") return "/feed";
+    const data = n.data ?? {};
+    const eventId = data.event_id;
+    if (typeof eventId === "string" && /^[0-9a-fA-F]{24}$/.test(eventId)) return `/events/${eventId}`;
+    // Community notifications carry an id but the detail route is slug-based,
+    // so send the reader to the community list rather than a dead id link.
+    if (typeof data.community_id === "string") return "/communities";
+    if (typeof data.post_id === "string") return "/feed";
     if (n.type === "follow" && n.actor) return `/profile/${n.actor.username}`;
-    if (n.type === "message") return "/chat";
-    if (n.type === "event_reminder" || n.type === "event_rsvp") {
-      const eventId = n.data?.event_id;
-      if (typeof eventId === "string") return `/events/${eventId}`;
-      return "/events";
-    }
+    if (n.type === "message" || typeof data.conversation_id === "string") return "/chat";
+    if (n.type === "event_reminder" || n.type === "event_rsvp") return "/events";
     if (n.type === "community_join") return "/communities";
+    // Academic + campus notifications deep-link to their own section.
+    if (n.type === "assignment_published" || n.type === "assignment_due" || n.type === "assignment_overdue") {
+      return typeof data.assignment_id === "string" ? `/class-assignments/${data.assignment_id}` : "/class-assignments";
+    }
+    if (n.type === "exam_published" || n.type === "exam_result_released") {
+      return typeof data.exam_id === "string" ? `/class-exams/${data.exam_id}` : "/class-exams";
+    }
+    if (n.type === "announcement") return "/announcements";
+    if (n.type === "content_moderation") {
+      if (typeof data.content_id === "string" && data.content_type === "reel") return `/reels/${data.content_id}`;
+      if (typeof data.content_id === "string" && data.content_type === "video") return `/videos/${data.content_id}`;
+      return "/notifications";
+    }
+    if (n.type === "content_published") {
+      if (typeof data.reel_id === "string") return `/reels/${data.reel_id}`;
+      if (typeof data.video_id === "string") return `/videos/${data.video_id}`;
+      return "/feed";
+    }
     return "/feed";
   };
 

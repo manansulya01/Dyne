@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes, col } from "@/lib/mongo/collections";
-import { objectIdSchema } from "@/lib/mongo/ids";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { toHttpError } from "@/lib/auth/session";
 import { parseLimitParam } from "@/lib/utils";
 import { requireAdminUser } from "../stats/route";
@@ -94,7 +94,7 @@ export async function PATCH(request: Request) {
     if (updates.category !== undefined) updateDoc.category = updates.category;
     if (updates.isFeatured !== undefined) updateDoc.isFeatured = updates.isFeatured;
 
-    const res = await col(db, "blogs").updateOne({ _id: blogId } as never, { $set: updateDoc });
+    const res = await col(db, "blogs").updateOne({ _id: toObjectId(blogId) } as never, { $set: updateDoc });
     if (res.matchedCount === 0) {
       return NextResponse.json({ error: "Blog not found" }, { status: 404 });
     }
@@ -103,7 +103,7 @@ export async function PATCH(request: Request) {
 
   if (action === "publish" || action === "unpublish") {
     const res = await col(db, "blogs").updateOne(
-      { _id: blogId } as never,
+      { _id: toObjectId(blogId) } as never,
       {
         $set: {
           isPublished: action === "publish",
@@ -139,7 +139,7 @@ export async function DELETE(request: Request) {
   }
 
   const { blogId } = validated.data;
-  const res = await col(db, "blogs").deleteOne({ _id: blogId } as never);
+  const res = await col(db, "blogs").deleteOne({ _id: toObjectId(blogId) } as never);
   if (res.deletedCount === 0) {
     return NextResponse.json({ error: "Blog not found" }, { status: 404 });
   }

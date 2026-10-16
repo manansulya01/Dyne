@@ -2,86 +2,124 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes } from "@/lib/mongo/collections";
-import { createVideo, listVideos, getVideo } from "@/lib/db/videos";
+import { createVideo, listVideoCategories, listVideos, getVideo } from "@/lib/db/videos";
 import { toVideoJSON } from "@/lib/db/contracts";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { getSessionUser } from "@/lib/auth/session";
 import { parseLimitParam } from "@/lib/utils";
+import { guardRate, withPermission } from "@/lib/security/authorize";
+
+/**
+ * Horizontal video collection API.
+ *
+ * GET  — approved feed; session optional (public shape).
+ * POST — teacher/admin upload, gated by `videos.create`, run through the
+ *        moderation pipeline before anything is published.
+ */
 
 const videoCreateSchema = z.object({
-  title: z.string().min(3).max(200),
+  title: z.string().trim().min(3).max(200),
   description: z.string().max(5000).optional(),
-  videoUrl: z.string().max(2000),
-  thumbnailUrl: z.string().max(2000).optional(),
+  videoUrl: z.string().min(1).max(2000),
+  thumbnailUrl: z.string().min(1).max(2000).optional(),
   category: z.string().max(50).optional(),
-  duration: z.number().int().nonnegative().optional(),
+  duration: z.number().int().nonnegative().max(60 * 60 * 6).optional(),
+  width: z.number().int().positive().max(20000).optional(),
+  height: z.number().int().positive().max(20000).optional(),
 });
 
-async function authed() {
+export async function GET(request: Request) {
   const db = await getDb();
   await ensureIndexes(db);
-  try {
-    const user = await requireSessionUser(db);
-    return { db, user };
-  } catch (err) {
-    const { status, message } = toHttpError(err);
-    return { db, error: NextResponse.json({ error: message }, { status }) };
-  }
-}
-
-export async function GET(request: Request) {
-  const ctx = await authed();
-  if ("error" in ctx) return ctx.error;
-  const { db, user } = ctx;
 
   const { searchParams } = new URL(request.url);
-  const cursor = searchParams.get("cursor");
-  const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
+  const user = await getSessionUser(db);
+  const limit = parseLimitParam(searchParams.get("limit"), 24, 48);
   const category = searchParams.get("category") || undefined;
   const mine = searchParams.get("mine") === "true";
   const popular = searchParams.get("sort") === "popular";
+  const search = (searchParams.get("search") || "").trim().slice(0, 100) || undefined;
+  const creatorId = searchParams.get("creatorId") || undefined;
+
+  if (mine && !user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let before: { createdAt: Date; id: string } | null = null;
+  let legacyMaxViews: number | null = null;
+  const rawBefore = searchParams.get("before");
+  const beforeId = searchParams.get("beforeId");
+  if (rawBefore && beforeId && /^[0-9a-fA-F]{24}$/.test(beforeId)) {
+    const d = new Date(rawBefore);
+    if (!isNaN(+d)) before = { createdAt: d, id: beforeId };
+  } else {
+    // Legacy cursor (createdAt ISO) still accepted for the existing Watch
+    // client; ordering stays deterministic via the `_id` tiebreak.
+    const rawCursor = searchParams.get("cursor");
+    if (rawCursor && !popular) {
+      const d = new Date(rawCursor);
+      if (!isNaN(+d)) before = { createdAt: d, id: "" };
+    } else if (rawCursor && popular) {
+      const maxViews = Number(rawCursor);
+      if (Number.isFinite(maxViews)) legacyMaxViews = maxViews;
+    }
+  }
 
   const videos = await listVideos(db, {
     limit,
     category,
-    mine: mine ? user.id : undefined,
+    creatorId: mine ? user?.id : creatorId,
+    includeOwnPending: mine ? user?.id : undefined,
     sort: popular ? "popular" : "new",
-    cursor,
+    before,
+    search,
+    maxViews: legacyMaxViews,
   });
   const mapped = videos.map((v) => toVideoJSON(v as unknown as Record<string, unknown>));
 
+  const last = mapped[mapped.length - 1];
   return NextResponse.json({
     videos: mapped,
-    cursor: mapped.length
+    // Keyset cursor (stable, duplicate-free) …
+    cursor: last
+      ? { before: String(last.created_at), beforeId: last.id }
+      : null,
+    // … plus the legacy scalar cursor the existing Watch client reads.
+    legacyCursor: last
       ? popular
-        ? mapped[mapped.length - 1].view_count
-        : mapped[mapped.length - 1].created_at
+        ? last.view_count
+        : String(last.created_at)
       : null,
     hasMore: mapped.length === limit,
+    // Category chips are built from the server's full set, not just the
+    // loaded page, so filtering never silently loses options.
+    categories: await listVideoCategories(db),
   });
 }
 
 export async function POST(request: Request) {
-  const ctx = await authed();
-  if ("error" in ctx) return ctx.error;
-  const { db, user } = ctx;
+  const auth = await withPermission("videos.create");
+  if (!auth.ok) return auth.response;
+  const { db, user } = auth.ctx;
+
+  const limited = guardRate(request, user.id, "uploads");
+  if (limited) return limited;
 
   const body = await request.json().catch(() => null);
   const validated = videoCreateSchema.safeParse(body);
-
   if (!validated.success) {
-    return NextResponse.json(
-      { error: validated.error.flatten().fieldErrors },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: validated.error.flatten().fieldErrors }, { status: 400 });
   }
+  const d = validated.data;
 
   const created = await createVideo(db, user.id, {
-    title: validated.data.title,
-    description: validated.data.description,
-    videoUrl: validated.data.videoUrl,
-    thumbnailUrl: validated.data.thumbnailUrl,
-    category: validated.data.category,
-    duration: validated.data.duration,
+    title: d.title,
+    description: d.description,
+    videoUrl: d.videoUrl,
+    thumbnailUrl: d.thumbnailUrl,
+    category: d.category,
+    duration: d.duration,
+    width: d.width,
+    height: d.height,
   });
 
   if (!created.ok) {
@@ -94,8 +132,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid video data" }, { status: 400 });
   }
 
-  const row = await getVideo(db, created.videoId);
-  return NextResponse.json({
-    video: row ? toVideoJSON(row as unknown as Record<string, unknown>) : { id: created.videoId.toHexString() },
-  });
+  const row = await getVideo(db, created.videoId, user.id);
+  return NextResponse.json(
+    {
+      video: row
+        ? toVideoJSON(row as unknown as Record<string, unknown>)
+        : { id: created.videoId.toHexString() },
+      moderationStatus: created.moderationStatus,
+    },
+    { status: 201 }
+  );
 }

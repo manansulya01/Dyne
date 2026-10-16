@@ -17,7 +17,7 @@ async function requireAdminWithPerm(db: unknown, permission: string) {
   return admin;
 }
 
-export async function GET(request: Request) {
+export async function GET() {
   const db = await getDb();
   await ensureIndexes(db);
 

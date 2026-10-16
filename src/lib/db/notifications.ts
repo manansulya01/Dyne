@@ -11,20 +11,36 @@ export interface CreateNotificationInput {
   title: string;
   message?: string | null;
   data?: Record<string, unknown> | null;
+  /**
+   * Idempotency key. Stored as `data.notificationKey` behind a sparse unique
+   * index, so a retried fan-out (announcement, exam publish, assignment
+   * publish) can never produce a duplicate notification.
+   */
+  dedupeKey?: string | null;
 }
 
 export async function createNotification(db: Db, input: CreateNotificationInput) {
-  const res = await col<NotificationDoc>(db, "notifications").insertOne({
-    recipientId: toObjectId(input.recipientId),
-    actorId: input.actorId ? toObjectId(input.actorId) : null,
-    type: input.type,
-    title: input.title,
-    message: input.message ?? null,
-    data: input.data ?? null,
-    readAt: null,
-    createdAt: new Date(),
-  } as never);
-  return res.insertedId;
+  const data = { ...(input.data ?? {}) };
+  if (input.dedupeKey) data.notificationKey = input.dedupeKey;
+  try {
+    const res = await col<NotificationDoc>(db, "notifications").insertOne({
+      recipientId: toObjectId(input.recipientId),
+      actorId: input.actorId ? toObjectId(input.actorId) : null,
+      type: input.type,
+      title: input.title,
+      message: input.message ?? null,
+      data,
+      readAt: null,
+      createdAt: new Date(),
+    } as never);
+    return res.insertedId;
+  } catch (err: unknown) {
+    // Duplicate dedupe key: the notification already exists — that is success.
+    if (err instanceof Error && /duplicate key/i.test(err.message)) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 export async function listNotifications(
@@ -38,7 +54,7 @@ export async function listNotifications(
   if (opts.unreadOnly) filter.readAt = null;
   const rows = await col<NotificationDoc>(db, "notifications")
     .find(filter as never)
-    .sort({ createdAt: -1 })
+    .sort({ createdAt: -1, _id: -1 })
     .limit(limit)
     .toArray();
   // Attach actor profiles in one batched query.

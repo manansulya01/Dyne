@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -19,6 +19,7 @@ interface ProfileData {
   class_grade: string | null;
   house: string | null;
   interests: string[];
+  profile_tags?: string[];
   created_at: string;
   followers_count: number;
   following_count: number;
@@ -33,19 +34,27 @@ export function PeoplePageClient({ currentUserId }: PeoplePageClientProps) {
   const router = useRouter();
   const [profiles, setProfiles] = useState<ProfileData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // A failed fetch must not masquerade as "no people found".
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("all");
-  const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
+  // Cursor/loading refs: fetchPeople reads these instead of closing over
+  // state, so its identity only changes with search/filter inputs.
+  const cursorRef = useRef<string | null>(null);
+  const hasMoreRef = useRef(true);
+  const loadingRef = useRef(false);
+
   const fetchPeople = useCallback(async (isLoadMore = false) => {
-    if (isLoadMore && (!hasMore || isLoading)) return;
+    if (isLoadMore && (!hasMoreRef.current || loadingRef.current)) return;
+    loadingRef.current = true;
     setIsLoading(true);
 
     try {
       const params = new URLSearchParams({ limit: "20" });
-      if (cursor) params.set("cursor", cursor);
+      if (cursorRef.current) params.set("cursor", cursorRef.current);
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (roleFilter !== "all") params.set("role", roleFilter);
 
@@ -58,20 +67,24 @@ export function PeoplePageClient({ currentUserId }: PeoplePageClientProps) {
         } else {
           setProfiles(data.profiles);
         }
-        setCursor(data.cursor);
-        setHasMore(data.hasMore);
+        cursorRef.current = data.cursor ?? null;
+        hasMoreRef.current = !!data.hasMore;
+        setHasMore(!!data.hasMore);
       }
     } catch (error) {
       console.error("Failed to fetch people:", error);
+      setLoadError(error instanceof Error ? error.message : "Could not load people");
     } finally {
+      loadingRef.current = false;
       setIsLoading(false);
     }
-  }, [cursor, debouncedSearch, roleFilter, hasMore, isLoading]);
+  }, [debouncedSearch, roleFilter]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchQuery);
-      setCursor(null);
+      cursorRef.current = null;
+      hasMoreRef.current = true;
       setProfiles([]);
       setHasMore(true);
     }, 300);
@@ -79,9 +92,9 @@ export function PeoplePageClient({ currentUserId }: PeoplePageClientProps) {
   }, [searchQuery]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial server-state sync on search/filter change
     fetchPeople();
-  }, [debouncedSearch, roleFilter]);
+  }, [fetchPeople]);
 
   const handleFollow = useCallback(async (targetUserId: string, wasFollowing: boolean) => {
     if (!currentUserId) {
@@ -97,7 +110,7 @@ export function PeoplePageClient({ currentUserId }: PeoplePageClientProps) {
       });
 
       return response.ok;
-    } catch (error) {
+    } catch {
       return false;
     }
   }, [currentUserId, router]);
@@ -153,7 +166,13 @@ export function PeoplePageClient({ currentUserId }: PeoplePageClientProps) {
           />
         ))}
 
-        {profiles.length === 0 && !isLoading && (
+        {loadError && (
+          <p role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            {loadError} — retry by changing the search.
+          </p>
+        )}
+
+        {profiles.length === 0 && !isLoading && !loadError && (
           <div className="text-center py-12 text-muted-foreground">
             <p>No people found</p>
           </div>
@@ -240,6 +259,13 @@ function PersonCard({ profile, currentUserId, onFollow }: {
             </Button>
           )}
         </div>
+        {(profile.profile_tags ?? []).length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {(profile.profile_tags ?? []).map((t) => (
+              <span key={t} className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary">#{t}</span>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

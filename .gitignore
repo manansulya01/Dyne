@@ -13,6 +13,9 @@
 # testing
 /coverage
 
+# local development database (scripts/dev-mongo.mjs)
+.dev-mongo-data/
+
 # next.js
 /.next/
 /out/
@@ -42,3 +45,5 @@ supabase/.temp/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.secure/
+storage-local/

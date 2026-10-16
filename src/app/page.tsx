@@ -26,7 +26,8 @@ export const metadata: Metadata = {
 
 /**
  * Public landing page — always rendered for logged-out AND logged-in
- * visitors. Authenticated app routes live under (dashboard) and /home.
+ * visitors. Authenticated app routes live under (dashboard); /home redirects
+ * to /feed for backwards compatibility.
  */
 export default function LandingPage() {
   return (

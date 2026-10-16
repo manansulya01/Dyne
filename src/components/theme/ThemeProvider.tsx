@@ -3,10 +3,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 export type ThemeMode = "light" | "dark" | "system";
-export type AccentPreset = "dyne-blue" | "midnight" | "aurora" | "campus" | "slate" | "ocean";
-export type Density = "comfortable" | "compact";
+export type AccentPreset =
+  | "dyne-blue" | "campus-blue" | "midnight" | "ocean" | "aurora"
+  | "forest" | "campus" | "slate" | "violet" | "rose" | "amber";
+export type Density = "compact" | "comfortable" | "spacious";
 export type FontScale = "small" | "medium" | "large" | "xl";
-export type MotionPref = "full" | "reduced";
+export type MotionPref = "full" | "reduced" | "minimal";
 
 export interface ThemeState {
   mode: ThemeMode;
@@ -21,7 +23,7 @@ const STORAGE_KEY = "dyne-theme";
 
 const DEFAULTS: ThemeState = {
   mode: "system",
-  accent: "dyne-blue",
+  accent: "campus",
   density: "comfortable",
   fontScale: "medium",
   motion: "full",
@@ -30,11 +32,16 @@ const DEFAULTS: ThemeState = {
 
 export const ACCENT_PRESETS: Array<{ id: AccentPreset; label: string; swatch: string }> = [
   { id: "dyne-blue", label: "Dyne Blue", swatch: "#0f7ff2" },
+  { id: "campus-blue", label: "Campus Blue", swatch: "#1d4ed8" },
   { id: "midnight", label: "Midnight", swatch: "#4f46e5" },
+  { id: "ocean", label: "Ocean", swatch: "#0284c7" },
   { id: "aurora", label: "Aurora", swatch: "#0d9488" },
+  { id: "forest", label: "Forest", swatch: "#166534" },
   { id: "campus", label: "Campus", swatch: "#15803d" },
   { id: "slate", label: "Slate", swatch: "#475569" },
-  { id: "ocean", label: "Ocean", swatch: "#0284c7" },
+  { id: "violet", label: "Violet", swatch: "#7c3aed" },
+  { id: "rose", label: "Rose", swatch: "#e11d48" },
+  { id: "amber", label: "Amber", swatch: "#b45309" },
 ];
 
 function load(): ThemeState {
@@ -51,9 +58,9 @@ function load(): ThemeState {
     return {
       mode,
       accent: ACCENT_PRESETS.some((a) => a.id === m.accent) ? (m.accent as AccentPreset) : DEFAULTS.accent,
-      density: m.density === "compact" ? "compact" : "comfortable",
+      density: m.density === "compact" ? "compact" : m.density === "spacious" ? "spacious" : "comfortable",
       fontScale: ["small", "medium", "large", "xl"].includes(m.fontScale ?? "") ? (m.fontScale as FontScale) : "medium",
-      motion: m.motion === "reduced" ? "reduced" : "full",
+      motion: m.motion === "reduced" ? "reduced" : m.motion === "minimal" ? "minimal" : "full",
       effective: mode === "system" ? sys : mode,
     };
   } catch {

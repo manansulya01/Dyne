@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes } from "@/lib/mongo/collections";
 import { globalSearch } from "@/lib/db/search";
-import { toCommunityJSON, toVideoJSON } from "@/lib/db/contracts";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { rateLimit, clientKey, RATE_PRESETS } from "@/lib/security/rateLimit";
+import { toCommunityJSON, toReelJSON, toVideoJSON } from "@/lib/db/contracts";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session"
+import { isAdminRole } from "@/lib/permissions";
 
 function shapeAuthor(a: unknown) {
   if (!a || typeof a !== "object") return null;
@@ -28,10 +30,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: message }, { status });
   }
 
+  const rl = rateLimit(`search:${clientKey(request, user.id)}`, RATE_PRESETS.search.limit, RATE_PRESETS.search.windowMs);
+  if (!rl.ok) {
+    return NextResponse.json({ error: "Too many searches. Please slow down." }, { status: 429 });
+  }
+
   const { searchParams } = new URL(request.url);
   const results = await globalSearch(db, searchParams.get("q") || "", {
     userId: user.id,
-    isAdmin: user.role === "admin",
+    isAdmin: isAdminRole(user.role),
   });
 
   return NextResponse.json({
@@ -74,6 +81,16 @@ export async function GET(request: Request) {
     videos: (results.videos as Array<Record<string, unknown>>).map((v) =>
       toVideoJSON(v)
     ),
+    reels: (results.reels as Array<Record<string, unknown>>).map((r) => toReelJSON(r)),
+    announcements: (results.announcements as Array<Record<string, unknown>>).map((a) => ({
+      id: String(a.id),
+      title: a.title,
+      body: String(a.body ?? "").slice(0, 200),
+      category: a.category ?? null,
+      priority: a.priority ?? "normal",
+      is_pinned: Boolean(a.isPinned),
+      created_at: a.createdAt,
+    })),
     blogs: (results.blogs as Array<Record<string, unknown>>).map((b) => ({
       id: String(b.id),
       slug: b.slug,
@@ -81,6 +98,15 @@ export async function GET(request: Request) {
       excerpt: b.excerpt ?? null,
       cover_image_url: b.coverImageUrl ?? null,
       category: b.category ?? null,
+    })),
+    // The Study tab rendered results that this route never serialized, so the
+    // section was permanently empty. Approved, non-removed materials only.
+    studyMaterials: (results.studyMaterials as Array<Record<string, unknown>>).map((m) => ({
+      id: String(m.id),
+      title: m.title,
+      subject: m.subject ?? null,
+      classGrade: m.classGrade ?? null,
+      materialType: m.materialType ?? null,
     })),
   });
 }

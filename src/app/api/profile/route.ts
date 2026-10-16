@@ -3,6 +3,7 @@ import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes } from "@/lib/mongo/collections";
 import { profileUpdateSchema } from "@/lib/validation";
 import { objectIdSchema } from "@/lib/mongo/ids";
+import { sanitizeProfileTags } from "@/lib/constants/profileTags";
 import { findUserById, followCounts, isFollowing, updateOwnProfile } from "@/lib/db/users";
 import { toProfileJSON } from "@/lib/db/contracts";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
@@ -75,6 +76,7 @@ export async function PATCH(request: Request) {
     classGrade: validated.data.classGrade,
     house: validated.data.house,
     interests: validated.data.interests,
+    profileTags: validated.data.profileTags ? sanitizeProfileTags(validated.data.profileTags) : undefined,
     coverImageUrl: validated.data.coverImageUrl,
     accent: validated.data.accent,
   });

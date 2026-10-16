@@ -33,6 +33,7 @@ export async function createCommunity(
       imageUrl: null,
       ownerId: toObjectId(ownerId),
       isPrivate: !!input.isPrivate,
+      rules: [],
       createdAt: now,
       updatedAt: now,
     } as never);
@@ -41,6 +42,16 @@ export async function createCommunity(
       userId: toObjectId(ownerId),
       role: "owner",
       joinedAt: now,
+    } as never);
+    // Every community starts with a #general channel.
+    await col(db, "communityChannels").insertOne({
+      communityId: res.insertedId,
+      name: "general",
+      topic: "General discussion",
+      position: 0,
+      createdBy: toObjectId(ownerId),
+      createdAt: now,
+      updatedAt: now,
     } as never);
     return { ok: true as const, communityId: res.insertedId };
   } catch (err: unknown) {
@@ -121,17 +132,17 @@ export async function leaveCommunity(
   if (!self) {
     const role = await memberRole(db, cid, actor);
     const isOwner = community.ownerId.equals(actor);
-    if (!isAdmin && !isOwner && role !== "moderator") {
+    // Moderators and admins may remove members; admins may additionally
+    // remove moderators. Touching admins stays owner-only.
+    if (!isAdmin && !isOwner && role !== "moderator" && role !== "admin") {
       return { ok: false as const, reason: "forbidden" as const };
     }
     if (target.equals(community.ownerId)) {
       return { ok: false as const, reason: "cannot_remove_owner" as const };
     }
-    // Removing a fellow moderator is owner/admin-only (consistent with
-    // setMemberRole, where touching moderators is owner-only).
     if (!isAdmin && !isOwner) {
       const targetRole = await memberRole(db, cid, target);
-      if (targetRole === "moderator") {
+      if (targetRole === "admin" || (targetRole === "moderator" && role !== "admin")) {
         return { ok: false as const, reason: "forbidden" as const };
       }
     }
@@ -151,7 +162,7 @@ export async function setMemberRole(
   communityId: string | ObjectId,
   targetUserId: string | ObjectId,
   actorId: string | ObjectId,
-  role: "member" | "moderator",
+  role: "member" | "moderator" | "admin",
   isAdmin = false
 ) {
   const cid = toObjectId(communityId);
@@ -161,20 +172,29 @@ export async function setMemberRole(
   if (!community) return { ok: false as const, reason: "not_found" as const };
   const isOwner = community.ownerId.equals(actor) || isAdmin;
   const actorRole = await memberRole(db, cid, actor);
-  if (!isOwner && actorRole !== "moderator") {
+  if (!isOwner && actorRole !== "admin" && actorRole !== "moderator") {
     return { ok: false as const, reason: "forbidden" as const };
   }
   if (target.equals(community.ownerId)) {
     return { ok: false as const, reason: "cannot_change_owner" as const };
   }
-  // Moderators may only keep members as members; promoting to moderator
-  // and touching other moderators is owner-only.
-  if (!isOwner && role === "moderator") {
-    return { ok: false as const, reason: "owner_only_promote" as const };
-  }
   const targetRole = await memberRole(db, cid, target);
   if (!targetRole) return { ok: false as const, reason: "not_member" as const };
-  if (!isOwner && targetRole === "moderator") {
+  // Hierarchy: owner > admin > moderator > member.
+  // - Only the owner (or platform admin) may assign/remove the admin role
+  //   or touch another admin.
+  // - Admins may promote members to moderator and demote moderators.
+  // - Moderators cannot change roles.
+  if (!isOwner && (role === "admin" || targetRole === "admin")) {
+    return { ok: false as const, reason: "owner_only_admin" as const };
+  }
+  if (!isOwner && actorRole === "moderator") {
+    return { ok: false as const, reason: "forbidden" as const };
+  }
+  if (!isOwner && role === "moderator" && actorRole !== "admin") {
+    return { ok: false as const, reason: "owner_only_promote" as const };
+  }
+  if (!isOwner && targetRole === "moderator" && actorRole !== "admin") {
     return { ok: false as const, reason: "owner_only_demote" as const };
   }
   await col<CommunityMemberDoc>(db, "communityMembers").updateOne(
@@ -187,7 +207,7 @@ export async function setMemberRole(
 export async function listMembers(db: Db, communityId: string | ObjectId) {
   const rows = await col<CommunityMemberDoc>(db, "communityMembers")
     .find({ communityId: toObjectId(communityId) } as never)
-    .sort({ joinedAt: 1 })
+    .sort({ joinedAt: 1, _id: 1 })
     .limit(200)
     .toArray();
   const authors = await resolveAuthors(db, rows.map((r) => r.userId));
@@ -218,6 +238,7 @@ export async function createCommunityPost(
     communityId: toObjectId(communityId),
     authorId: toObjectId(authorId),
     content: text,
+    isPinned: false,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -231,27 +252,66 @@ export async function listCommunityPosts(
   limit = 20,
   before?: Date
 ) {
+  const cid = toObjectId(communityId);
   const filter: Record<string, unknown> = {
-    communityId: toObjectId(communityId),
+    communityId: cid,
     deletedAt: null,
   };
   if (before) filter.createdAt = { $lt: before };
   const rows = await col<CommunityPostDoc>(db, "communityPosts")
     .find(filter as never)
-    .sort({ createdAt: -1 })
+    .sort({ createdAt: -1, _id: -1 })
     .limit(safeLimit(limit, 50))
     .toArray();
   const authors = await resolveAuthors(db, rows.map((r) => r.authorId));
-  return serializeMany(
+  const serialized = serializeMany(
     rows.map((r) => ({ ...r, author: authors.get(r.authorId.toHexString()) ?? null }))
   );
+  if (before) return serialized;
+  // First page: pinned discussions float to the top (max 5), then latest.
+  // Cursor pagination on later pages stays strictly chronological, so pinned
+  // items never duplicate or vanish across pages.
+  const pinned = serialized.filter((p) => (p as unknown as Record<string, unknown>).isPinned).slice(0, 5);
+  if (pinned.length === 0) return serialized;
+  const pinnedIds = new Set(pinned.map((p) => String((p as unknown as Record<string, unknown>).id)));
+  return [
+    ...pinned,
+    ...serialized.filter((p) => !pinnedIds.has(String((p as unknown as Record<string, unknown>).id))),
+  ];
+}
+
+/** Pin/unpin a discussion. Owner, community admin/moderator, or platform admin. */
+export async function setPostPinned(
+  db: Db,
+  postId: string | ObjectId,
+  actorId: string | ObjectId,
+  pinned: boolean,
+  isPlatformAdmin = false
+) {
+  const pid = toObjectId(postId);
+  const post = await col<CommunityPostDoc>(db, "communityPosts").findOne({ _id: pid } as never);
+  if (!post || post.deletedAt) return { ok: false as const, reason: "not_found" as const };
+  const community = await col<CommunityDoc>(db, "communities").findOne({ _id: post.communityId } as never);
+  if (!community) return { ok: false as const, reason: "not_found" as const };
+  const role = await memberRole(db, post.communityId, actorId);
+  const allowed =
+    isPlatformAdmin ||
+    community.ownerId.equals(toObjectId(actorId)) ||
+    role === "admin" ||
+    role === "moderator";
+  if (!allowed) return { ok: false as const, reason: "forbidden" as const };
+  await col<CommunityPostDoc>(db, "communityPosts").updateOne(
+    { _id: pid } as never,
+    { $set: { isPinned: pinned, updatedAt: new Date() } }
+  );
+  return { ok: true as const };
 }
 
 export async function updateCommunity(
   db: Db,
   communityId: string | ObjectId,
   actorId: string | ObjectId,
-  patch: { name?: string; description?: string | null; isPrivate?: boolean },
+  patch: { name?: string; description?: string | null; isPrivate?: boolean; rules?: string[] },
   isAdmin = false
 ) {
   const cid = toObjectId(communityId);
@@ -261,6 +321,7 @@ export async function updateCommunity(
   const canEdit =
     isAdmin ||
     community.ownerId.equals(toObjectId(actorId)) ||
+    role === "admin" ||
     role === "moderator";
   if (!canEdit) return { ok: false as const, reason: "forbidden" as const };
   const update: Record<string, unknown> = { updatedAt: new Date() };
@@ -280,6 +341,59 @@ export async function updateCommunity(
     }
     update.isPrivate = patch.isPrivate;
   }
+  if (patch.rules !== undefined) {
+    const rules = patch.rules
+      .filter((r) => typeof r === "string")
+      .map((r) => r.trim().slice(0, 200))
+      .filter(Boolean)
+      .slice(0, 10);
+    update.rules = rules;
+  }
   await col<CommunityDoc>(db, "communities").updateOne({ _id: cid } as never, { $set: update });
   return { ok: true as const };
+}
+
+/** Cross-community discussion feed: latest posts from communities the user joined. */
+export async function listCommunityFeed(
+  db: Db,
+  userId: string | ObjectId,
+  limit = 20,
+  before?: Date
+) {
+  const uid = toObjectId(userId);
+  const memberships = await col<CommunityMemberDoc>(db, "communityMembers")
+    .find({ userId: uid } as never)
+    .project({ communityId: 1 })
+    .toArray();
+  const ids = memberships.map((m) => m.communityId);
+  if (ids.length === 0) return [];
+  const filter: Record<string, unknown> = {
+    communityId: { $in: ids },
+    deletedAt: null,
+  };
+  if (before) filter.createdAt = { $lt: before };
+  const rows = await col<CommunityPostDoc>(db, "communityPosts")
+    .find(filter as never)
+    .sort({ createdAt: -1, _id: -1 })
+    .limit(safeLimit(limit, 50))
+    .toArray();
+  if (rows.length === 0) return [];
+  const [authors, comms] = await Promise.all([
+    resolveAuthors(db, rows.map((r) => r.authorId)),
+    col<CommunityDoc>(db, "communities")
+      .find({ _id: { $in: [...new Map(rows.map((r) => [r.communityId.toHexString(), r.communityId])).values()] } } as never)
+      .project({ name: 1, slug: 1 })
+      .toArray(),
+  ]);
+  const commBy = new Map(comms.map((c) => [c._id.toHexString(), c]));
+  return serializeMany(
+    rows.map((r) => ({
+      ...r,
+      author: authors.get(r.authorId.toHexString()) ?? null,
+      community: (() => {
+        const c = commBy.get(r.communityId.toHexString());
+        return c ? { id: c._id.toHexString(), name: c.name, slug: c.slug } : null;
+      })(),
+    }))
+  );
 }

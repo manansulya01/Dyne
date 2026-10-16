@@ -30,14 +30,21 @@ const DEFAULTS: Prefs = {
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
+    // The visual track stays 28px, but the hit area is padded out to a 44px
+    // touch target so the switch is comfortable to tap on iPad/phone.
     <button
       role="switch"
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${checked ? "bg-primary" : "bg-muted"}`}
+      className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-primary"
     >
-      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${checked ? "left-6" : "left-1"}`} />
+      <span
+        aria-hidden="true"
+        className={`relative block h-7 w-12 rounded-full transition-colors ${checked ? "bg-primary" : "bg-muted"}`}
+      >
+        <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${checked ? "left-6" : "left-1"}`} />
+      </span>
     </button>
   );
 }
@@ -140,7 +147,7 @@ export function PreferenceSettings() {
           permissions are shown here rather than hidden. Session and password controls remain in their
           sections below.
         </div>
-        <Button variant="ghost" size="sm" className="mt-2" onClick={() => window.location.reload()}>Refresh to verify persistence</Button>
+        <Button variant="ghost" size="sm" className="mt-2 min-h-[44px]" onClick={() => window.location.reload()}>Refresh to verify persistence</Button>
       </CardContent>
     </Card>
   );

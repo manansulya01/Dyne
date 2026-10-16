@@ -5,7 +5,7 @@ import { ensureIndexes, col, type UserDoc } from "@/lib/mongo/collections";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 import { parseLimitParam } from "@/lib/utils";
 
-const VALID_ROLES = ["student", "teacher", "staff", "club", "admin"];
+const VALID_ROLES = ["student", "teacher", "staff", "club", "moderator", "admin", "super_admin"];
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 100);
@@ -79,6 +79,7 @@ export async function GET(request: Request) {
     class_grade: p.classGrade,
     house: p.house,
     interests: p.interests,
+    profile_tags: (p.profileTags ?? []) as string[],
     created_at: p.createdAt,
     followers_count: followersMap.get(p._id.toHexString()) ?? 0,
     following_count: followingMap.get(p._id.toHexString()) ?? 0,

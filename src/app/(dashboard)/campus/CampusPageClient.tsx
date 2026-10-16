@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
@@ -38,21 +38,32 @@ export function CampusPageClient() {
   const [categories, setCategories] = useState<string[]>([]);
   const [buildingsLoading, setBuildingsLoading] = useState(true);
   const [clubsLoading, setClubsLoading] = useState(true);
-  const [buildingsCursor, setBuildingsCursor] = useState<string | null>(null);
-  const [clubsCursor, setClubsCursor] = useState<string | null>(null);
   const [buildingsHasMore, setBuildingsHasMore] = useState(true);
   const [clubsHasMore, setClubsHasMore] = useState(true);
+  // Fetch failures must surface: otherwise a network error renders as
+  // "No buildings found", which reads as real data rather than a problem.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [clubCategoryFilter, setClubCategoryFilter] = useState("all");
 
+  // Cursor/loading refs: the fetchers read these instead of closing over
+  // state, so their identity only changes with search/filter inputs.
+  const buildingsCursorRef = useRef<string | null>(null);
+  const buildingsHasMoreRef = useRef(true);
+  const buildingsLoadingRef = useRef(false);
+  const clubsCursorRef = useRef<string | null>(null);
+  const clubsHasMoreRef = useRef(true);
+  const clubsLoadingRef = useRef(false);
+
   const fetchBuildings = useCallback(async (isLoadMore = false) => {
-    if (isLoadMore && (!buildingsHasMore || buildingsLoading)) return;
+    if (isLoadMore && (!buildingsHasMoreRef.current || buildingsLoadingRef.current)) return;
+    buildingsLoadingRef.current = true;
     setBuildingsLoading(true);
 
     try {
       const params = new URLSearchParams({ limit: "20" });
-      if (buildingsCursor) params.set("cursor", buildingsCursor);
+      if (buildingsCursorRef.current) params.set("cursor", buildingsCursorRef.current);
       if (debouncedSearch) params.set("search", debouncedSearch);
 
       const response = await fetch(`/api/campus/buildings?${params.toString()}`);
@@ -64,23 +75,27 @@ export function CampusPageClient() {
         } else {
           setBuildings(data.buildings);
         }
-        setBuildingsCursor(data.cursor);
-        setBuildingsHasMore(data.hasMore);
+        buildingsCursorRef.current = data.cursor ?? null;
+        buildingsHasMoreRef.current = !!data.hasMore;
+        setBuildingsHasMore(!!data.hasMore);
       }
     } catch (error) {
       console.error("Failed to fetch buildings:", error);
+      setLoadError(error instanceof Error ? error.message : "Could not load buildings");
     } finally {
+      buildingsLoadingRef.current = false;
       setBuildingsLoading(false);
     }
-  }, [buildingsCursor, debouncedSearch, buildingsHasMore, buildingsLoading]);
+  }, [debouncedSearch]);
 
   const fetchClubs = useCallback(async (isLoadMore = false) => {
-    if (isLoadMore && (!clubsHasMore || clubsLoading)) return;
+    if (isLoadMore && (!clubsHasMoreRef.current || clubsLoadingRef.current)) return;
+    clubsLoadingRef.current = true;
     setClubsLoading(true);
 
     try {
       const params = new URLSearchParams({ limit: "20" });
-      if (clubsCursor) params.set("cursor", clubsCursor);
+      if (clubsCursorRef.current) params.set("cursor", clubsCursorRef.current);
       if (debouncedSearch) params.set("search", debouncedSearch);
       if (clubCategoryFilter !== "all") params.set("category", clubCategoryFilter);
 
@@ -93,24 +108,29 @@ export function CampusPageClient() {
         } else {
           setClubs(data.clubs);
         }
-        setClubsCursor(data.cursor);
-        setClubsHasMore(data.hasMore);
+        clubsCursorRef.current = data.cursor ?? null;
+        clubsHasMoreRef.current = !!data.hasMore;
+        setClubsHasMore(!!data.hasMore);
         if (data.categories) {
           setCategories(data.categories);
         }
       }
     } catch (error) {
       console.error("Failed to fetch clubs:", error);
+      setLoadError(error instanceof Error ? error.message : "Could not load clubs");
     } finally {
+      clubsLoadingRef.current = false;
       setClubsLoading(false);
     }
-  }, [clubsCursor, debouncedSearch, clubCategoryFilter, clubsHasMore, clubsLoading]);
+  }, [debouncedSearch, clubCategoryFilter]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchQuery);
-      setBuildingsCursor(null);
-      setClubsCursor(null);
+      buildingsCursorRef.current = null;
+      clubsCursorRef.current = null;
+      buildingsHasMoreRef.current = true;
+      clubsHasMoreRef.current = true;
       setBuildings([]);
       setClubs([]);
       setBuildingsHasMore(true);
@@ -120,14 +140,14 @@ export function CampusPageClient() {
   }, [searchQuery]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial server-state sync on search change
     fetchBuildings();
-  }, [debouncedSearch]);
+  }, [fetchBuildings]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial server-state sync on search/filter change
     fetchClubs();
-  }, [debouncedSearch, clubCategoryFilter]);
+  }, [fetchClubs]);
 
   return (
     <div className="max-w-4xl mx-auto p-4">
@@ -159,6 +179,11 @@ export function CampusPageClient() {
 
         <TabsContent value="buildings" className="mt-4">
           <div className="space-y-3">
+            {loadError && (
+              <p role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                {loadError} — pull to retry.
+              </p>
+            )}
             {buildingsLoading && buildings.length === 0 && (
               <div className="flex justify-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -169,7 +194,7 @@ export function CampusPageClient() {
               <BuildingCard key={building.id} building={building} />
             ))}
 
-            {buildings.length === 0 && !buildingsLoading && (
+            {buildings.length === 0 && !buildingsLoading && !loadError && (
               <div className="text-center py-12 text-muted-foreground">
                 <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p>No buildings found</p>
@@ -201,6 +226,7 @@ export function CampusPageClient() {
               />
             </div>
             <select
+              aria-label="Filter clubs by category"
               value={clubCategoryFilter}
               onChange={e => setClubCategoryFilter(e.target.value)}
               className="px-3 py-2 border rounded-md bg-background w-full sm:w-48"
@@ -213,6 +239,12 @@ export function CampusPageClient() {
           </div>
 
           <div className="space-y-3">
+            {loadError && (
+              <p role="alert" className="rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                {loadError} — pull to retry.
+              </p>
+            )}
+
             {clubsLoading && clubs.length === 0 && (
               <div className="flex justify-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
@@ -223,7 +255,7 @@ export function CampusPageClient() {
               <ClubCard key={club.id} club={club} />
             ))}
 
-            {clubs.length === 0 && !clubsLoading && (
+            {clubs.length === 0 && !clubsLoading && !loadError && (
               <div className="text-center py-12 text-muted-foreground">
                 <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p>No clubs found</p>

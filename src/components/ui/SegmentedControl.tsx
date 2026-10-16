@@ -34,7 +34,7 @@ export function SegmentedControl<T extends string>({
             aria-selected={active}
             onClick={() => onChange(o.value)}
             className={cn(
-              "dyne-press flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-lg px-3.5 text-sm font-medium transition-colors",
+              "dyne-press flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-lg px-3.5 text-sm font-medium transition-colors",
               active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
             )}
           >

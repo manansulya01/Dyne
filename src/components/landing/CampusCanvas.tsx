@@ -205,6 +205,12 @@ export default function CampusCanvas({ reducedMotion, lowPower }: CampusCanvasPr
       camera={{ position: [0, 9, 16], fov: 45, near: 0.1, far: 220 }}
       gl={{ antialias: true, alpha: true }}
       style={{ touchAction: "pan-y" }}
+      // Reduced-motion (and low-power) devices render one frame on demand
+      // instead of animating at display refresh rate forever. The scene is
+      // decorative: the hero copy carries the message, so it stays hidden
+      // from assistive tech (the SVG fallback exposes role="img").
+      frameloop={reducedMotion || lowPower ? "demand" : "always"}
+      aria-hidden="true"
     >
       <color attach="background" args={["#09090b"]} />
       <hemisphereLight args={["#9db4d8", "#0b0e16", 0.85]} />

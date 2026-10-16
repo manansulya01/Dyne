@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useForm } from "react-hook-form";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { postCreateSchema, type PostCreateInput } from "@/lib/validation";
 import { Button } from "@/components/ui/Button";
@@ -13,6 +14,7 @@ import { EmptyState, ErrorState } from "@/components/ui/EmptyState";
 import { PostCardSkeleton } from "@/components/ui/Skeleton";
 import { BottomSheet } from "@/components/ui/Sheet";
 import { formatRelativeTime } from "@/lib/utils";
+import { RichText } from "@/components/shared/RichText";
 import { Heart, MessageCircle, Bookmark, Share2, Trash2, ImagePlus, Film, X, Flag, Sparkles, Users, Expand } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -28,10 +30,29 @@ interface FeedClientProps {
   } | null;
 }
 
-type FeedTab = "for-you" | "following";
+type FeedTab = "for-you" | "following" | "communities";
+
+interface CommunityFeedPost {
+  id: string;
+  community_id: string;
+  author_id: string;
+  content: string | null;
+  is_pinned: boolean;
+  created_at: string;
+  author: { id: string; username: string; display_name: string | null; avatar_url: string | null } | null;
+  community: { id: string; name: string; slug: string } | null;
+}
 
 const MAX_ATTACHMENTS = 4;
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
+
+/** Append a page without duplicating rows (cursor pagination is timestamp-based). */
+function appendUnique<T extends { id: string }>(prev: T[], next: T[]): T[] {
+  if (next.length === 0) return prev;
+  const seen = new Set(prev.map((p) => p.id));
+  const fresh = next.filter((p) => !seen.has(p.id));
+  return fresh.length > 0 ? [...prev, ...fresh] : prev;
+}
 
 export function FeedClient({ initialPosts, profile }: FeedClientProps) {
   const [tab, setTab] = useState<FeedTab>("for-you");
@@ -43,11 +64,30 @@ export function FeedClient({ initialPosts, profile }: FeedClientProps) {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [communityPosts, setCommunityPosts] = useState<CommunityFeedPost[]>([]);
+  const [communityCursor, setCommunityCursor] = useState<string | null>(null);
+  const [communityHasMore, setCommunityHasMore] = useState(false);
+
+  const fetchCommunityFeed = useCallback(async (cursorValue: string | null) => {
+    const params = new URLSearchParams({ limit: "20" });
+    if (cursorValue) params.set("cursor", cursorValue);
+    const res = await fetch(`/api/community-posts/feed?${params.toString()}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to load community discussions");
+    return (data.posts ?? []) as CommunityFeedPost[];
+  }, []);
 
   const fetchTab = useCallback(async (t: FeedTab) => {
     setIsSwitching(true);
     setLoadError(null);
     try {
+      if (t === "communities") {
+        const list = await fetchCommunityFeed(null);
+        setCommunityPosts(list);
+        setCommunityCursor(list[list.length - 1]?.created_at ?? null);
+        setCommunityHasMore(list.length === 20);
+        return;
+      }
       const params = new URLSearchParams({ limit: "20" });
       if (t === "following") params.set("filter", "following");
       const res = await fetch(`/api/posts?${params.toString()}`);
@@ -62,7 +102,7 @@ export function FeedClient({ initialPosts, profile }: FeedClientProps) {
     } finally {
       setIsSwitching(false);
     }
-  }, []);
+  }, [fetchCommunityFeed]);
 
   const switchTab = (t: FeedTab) => {
     setTab(t);
@@ -70,6 +110,24 @@ export function FeedClient({ initialPosts, profile }: FeedClientProps) {
   };
 
   const loadMore = useCallback(async () => {
+    if (tab === "communities") {
+      if (!communityHasMore || isLoadingMore || !communityCursor) return;
+      setIsLoadingMore(true);
+      setLoadError(null);
+      try {
+        const more = await fetchCommunityFeed(communityCursor);
+        // Dedupe by id: a createdAt-only cursor can repeat a row when two posts
+        // share a timestamp, which previously duplicated cards in the feed.
+        setCommunityPosts((prev) => appendUnique(prev, more));
+        setCommunityCursor(more[more.length - 1]?.created_at ?? null);
+        setCommunityHasMore(more.length === 20);
+      } catch (e) {
+        setLoadError(e instanceof Error ? e.message : "Failed to load posts");
+      } finally {
+        setIsLoadingMore(false);
+      }
+      return;
+    }
     if (!hasMore || isLoadingMore || !cursor) return;
     setIsLoadingMore(true);
     setLoadError(null);
@@ -80,7 +138,7 @@ export function FeedClient({ initialPosts, profile }: FeedClientProps) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load posts");
       const newPosts: PostWithRelations[] = data.posts ?? [];
-      setPosts((prev) => [...prev, ...newPosts]);
+      setPosts((prev) => appendUnique(prev, newPosts));
       setCursor(newPosts[newPosts.length - 1]?.created_at ?? null);
       setHasMore(newPosts.length === 20);
     } catch (e) {
@@ -88,7 +146,7 @@ export function FeedClient({ initialPosts, profile }: FeedClientProps) {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [cursor, hasMore, isLoadingMore, tab]);
+  }, [cursor, hasMore, isLoadingMore, tab, communityCursor, communityHasMore, fetchCommunityFeed]);
 
   const handleCreated = useCallback((post: PostWithRelations) => {
     setPosts((prev) => (tab === "following" ? prev : [post, ...prev]));
@@ -102,7 +160,7 @@ export function FeedClient({ initialPosts, profile }: FeedClientProps) {
     <div className="mx-auto w-full max-w-2xl px-3 pb-6 pt-4 sm:px-4">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Home</h1>
+          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Feed</h1>
           <p className="text-sm text-muted-foreground">Your campus, your community, your connection.</p>
         </div>
         <SegmentedControl<FeedTab>
@@ -112,12 +170,33 @@ export function FeedClient({ initialPosts, profile }: FeedClientProps) {
           options={[
             { value: "for-you", label: "For You", icon: <Sparkles className="h-4 w-4" aria-hidden="true" /> },
             { value: "following", label: "Following", icon: <Users className="h-4 w-4" aria-hidden="true" /> },
+            { value: "communities", label: "Communities", icon: <Users className="h-4 w-4" aria-hidden="true" /> },
           ]}
         />
       </div>
 
-      {profile && <CreatePostForm profile={profile} onCreated={handleCreated} />}
+      {profile && tab !== "communities" && <CreatePostForm profile={profile} onCreated={handleCreated} />}
 
+      {tab === "communities" ? (
+        <div className="mt-4 space-y-3" role="feed" aria-label="Community discussions" aria-busy={isSwitching}>
+          {isSwitching ? (
+            <><PostCardSkeleton /><PostCardSkeleton /></>
+          ) : (
+            communityPosts.map((post) => (
+              <CommunityFeedCard key={post.id} post={post} />
+            ))
+          )}
+          {!isSwitching && communityPosts.length === 0 && !loadError && (
+            <div className="dyne-card">
+              <EmptyState
+                icon={Users}
+                title="No community discussions yet"
+                description="Join communities to see their latest discussions here, newest first."
+              />
+            </div>
+          )}
+        </div>
+      ) : (
       <div className="mt-4 space-y-3" role="feed" aria-label="Campus feed" aria-busy={isSwitching}>
         {isSwitching ? (
           <><PostCardSkeleton /><PostCardSkeleton /></>
@@ -138,18 +217,57 @@ export function FeedClient({ initialPosts, profile }: FeedClientProps) {
           </div>
         )}
       </div>
+      )}
 
       {loadError && (
         <div className="dyne-card mt-3">
           <ErrorState title="Couldn't load posts" description={loadError} onRetry={() => void fetchTab(tab)} />
         </div>
       )}
-      {hasMore && posts.length > 0 && !isSwitching && (
-        <Button variant="outline" className="mt-3 min-h-[48px] w-full" onClick={loadMore} disabled={isLoadingMore}>
-          {isLoadingMore ? "Loading…" : "Load more"}
-        </Button>
-      )}
+      {tab === "communities"
+        ? (communityHasMore && communityPosts.length > 0 && !isSwitching && (
+          <Button variant="outline" className="mt-3 min-h-[48px] w-full" onClick={loadMore} disabled={isLoadingMore}>
+            {isLoadingMore ? "Loading…" : "Load more"}
+          </Button>
+        ))
+        : (hasMore && posts.length > 0 && !isSwitching && (
+          <Button variant="outline" className="mt-3 min-h-[48px] w-full" onClick={loadMore} disabled={isLoadingMore}>
+            {isLoadingMore ? "Loading…" : "Load more"}
+          </Button>
+        ))}
     </div>
+  );
+}
+
+function CommunityFeedCard({ post }: { post: CommunityFeedPost }) {
+  return (
+    <Card>
+      <CardContent className="pt-4">
+        <div className="flex gap-3">
+          <Avatar className="h-10 w-10">
+            <AvatarImage src={post.author?.avatar_url || ""} alt="" />
+            <AvatarFallback name={post.author?.display_name || post.author?.username} />
+          </Avatar>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="font-medium">{post.author?.display_name || post.author?.username}</span>
+              <span className="text-sm text-muted-foreground">@{post.author?.username}</span>
+              <span className="text-sm text-muted-foreground">·</span>
+              <time className="text-sm text-muted-foreground">{formatRelativeTime(post.created_at)}</time>
+              {post.is_pinned && (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Pinned</span>
+              )}
+            </div>
+            {post.community && (
+              <a href={`/communities/${post.community.slug}`} className="mt-0.5 inline-block text-xs font-medium text-primary hover:underline">
+                in {post.community.name}
+              </a>
+            )}
+            {post.content && <RichText text={post.content} className="mt-1 whitespace-pre-wrap" />}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -159,14 +277,16 @@ function CreatePostForm({ profile, onCreated }: {
 }) {
   const [isCreating, setIsCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [staged, setStaged] = useState<Array<{ id: string; url: string; media_type: "image" | "video" }>>([]);
+  const [staged, setStaged] = useState<Array<{ id: string; url: string; media_type: "image" | "video" | "file" }>>([]);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { register, handleSubmit, reset, watch } = useForm<PostCreateInput>({
+  const { register, handleSubmit, reset, control } = useForm<PostCreateInput>({
     resolver: zodResolver(postCreateSchema),
   });
-  const content = watch("content");
+  // useWatch (a hook) instead of watch() (an unmemoizable API): same value for
+  // the character counter, and it satisfies the React Compiler.
+  const content = useWatch({ control, name: "content" });
 
   const handleFiles = async (files: FileList | null) => {
     if (!files) return;
@@ -261,17 +381,20 @@ function CreatePostForm({ profile, onCreated }: {
                 <div className="grid grid-cols-2 gap-2">
                   {staged.map((m) => (
                     <div key={m.id} className="relative aspect-video overflow-hidden rounded-xl bg-muted">
-                      {m.media_type === "image" ? (
+                      {m.media_type === "video" ? (
+                        <video src={m.url} className="h-full w-full object-cover" muted playsInline />
+                      ) : m.media_type === "image" ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={m.url} alt="Attachment preview" className="h-full w-full object-cover" />
                       ) : (
-                        <video src={m.url} className="h-full w-full object-cover" muted playsInline />
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={m.url} alt="Attached file preview" className="h-full w-full bg-muted object-contain p-2 text-xs" />
                       )}
                       <button
                         type="button"
                         onClick={() => removeStaged(m.id)}
                         aria-label="Remove attachment"
-                        className="absolute right-1 top-1 flex min-h-[32px] min-w-[32px] items-center justify-center rounded-full bg-black/60 text-white"
+                        className="absolute right-1 top-1 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-black/60 text-white"
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -329,7 +452,7 @@ function CreatePostForm({ profile, onCreated }: {
   );
 }
 
-function PostCard({ post, currentUserId, onDeleted }: {
+export function PostCard({ post, currentUserId, onDeleted }: {
   post: PostWithRelations;
   currentUserId: string | null;
   onDeleted: (id: string) => void;
@@ -341,7 +464,11 @@ function PostCard({ post, currentUserId, onDeleted }: {
   const [commentCount, setCommentCount] = useState(post.comment_count || 0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [viewer, setViewer] = useState<{ url: string; type: "image" | "video" } | null>(null);
+  // In-flight guards: rapid taps must not stack overlapping writes or revert
+  // onto a stale snapshot (double-tap liked a post, server 400'd, UI flipped back).
+  const likePending = useRef(false);
+  const savePending = useRef(false);
+  const [viewer, setViewer] = useState<{ url: string; type: "image" | "video" | "file" } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const isOwner = currentUserId === post.author_id;
 
@@ -369,10 +496,11 @@ function PostCard({ post, currentUserId, onDeleted }: {
   }, [post.id, currentUserId]);
 
   const toggleLike = async () => {
-    if (!currentUserId) return;
+    if (!currentUserId || likePending.current) return;
+    likePending.current = true;
     const wasLiked = liked;
     setLiked(!wasLiked);
-    setLikeCount((c) => c + (wasLiked ? -1 : 1));
+    setLikeCount((c) => Math.max(0, c + (wasLiked ? -1 : 1)));
     setActionError(null);
     try {
       const res = wasLiked
@@ -384,18 +512,25 @@ function PostCard({ post, currentUserId, onDeleted }: {
           });
       if (!res.ok) {
         setLiked(wasLiked);
-        setLikeCount((c) => c + (wasLiked ? 1 : -1));
-        setActionError("Could not update reaction");
+        setLikeCount((c) => Math.max(0, c + (wasLiked ? 1 : -1)));
+        setActionError(
+          res.status === 400
+            ? "Reaction already saved — try again"
+            : "Could not update reaction"
+        );
       }
     } catch {
       setLiked(wasLiked);
-      setLikeCount((c) => c + (wasLiked ? 1 : -1));
+      setLikeCount((c) => Math.max(0, c + (wasLiked ? 1 : -1)));
       setActionError("Network error");
+    } finally {
+      likePending.current = false;
     }
   };
 
   const toggleSave = async () => {
-    if (!currentUserId) return;
+    if (!currentUserId || savePending.current) return;
+    savePending.current = true;
     const wasSaved = saved;
     setSaved(!wasSaved);
     try {
@@ -409,6 +544,8 @@ function PostCard({ post, currentUserId, onDeleted }: {
       if (!res.ok) setSaved(wasSaved);
     } catch {
       setSaved(wasSaved);
+    } finally {
+      savePending.current = false;
     }
   };
 
@@ -439,14 +576,21 @@ function PostCard({ post, currentUserId, onDeleted }: {
     }
   };
 
-  const submitReport = async (reason: string) => {
-    await fetch("/api/reports", {
+  const submitReport = async (reason: string, details?: string) => {
+    const res = await fetch("/api/reports", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ targetType: "post", targetId: post.id, reason: reason.slice(0, 100) }),
+      body: JSON.stringify({
+        targetType: "post",
+        targetId: post.id,
+        reason,
+        ...(details?.trim() ? { description: details.trim().slice(0, 2000) } : {}),
+      }),
     });
     setReportOpen(false);
-    setActionError("Thanks — our moderators will review this post");
+    setActionError(
+      res.ok ? "Thanks — our moderators will review this post" : "Could not submit the report. Please try again."
+    );
   };
 
   return (
@@ -476,7 +620,7 @@ function PostCard({ post, currentUserId, onDeleted }: {
                 )}
               </span>
             </div>
-            {post.content && <p className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-relaxed">{post.content}</p>}
+            {post.content && <RichText text={post.content} className="mt-1 whitespace-pre-wrap break-words text-[15px] leading-relaxed" />}
             {post.media && post.media.length > 0 && (
               <div className={cn("mt-2.5 grid gap-2", post.media.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
                 {post.media.map((m: PostMedia) => (
@@ -487,11 +631,14 @@ function PostCard({ post, currentUserId, onDeleted }: {
                     className="group relative aspect-[4/3] overflow-hidden rounded-xl bg-muted"
                     aria-label={`Open ${m.media_type} fullscreen`}
                   >
-                    {m.media_type === "image" ? (
+                    {m.media_type === "video" ? (
+                      <video src={m.url} preload="metadata" muted playsInline className="absolute inset-0 h-full w-full object-cover" />
+                    ) : m.media_type === "image" ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={m.url} alt="Post attachment" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
                     ) : (
-                      <video src={m.url} preload="metadata" muted playsInline className="absolute inset-0 h-full w-full object-cover" />
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={m.url} alt="Attached file" className="absolute inset-0 h-full w-full bg-muted object-contain p-2 text-xs text-muted-foreground" loading="lazy" />
                     )}
                     <span className="absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
                       <Expand className="h-4 w-4" aria-hidden="true" />
@@ -558,48 +705,85 @@ function PostCard({ post, currentUserId, onDeleted }: {
   );
 }
 
-export function MediaViewer({ url, type, onClose }: { url: string; type: "image" | "video"; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [onClose]);
+export function MediaViewer({ url, type, onClose }: { url: string; type: "image" | "video" | "file"; onClose: () => void }) {
+  // Shared dialog contract: Escape closes, scroll locks, focus trapped/restored.
+  const viewerRef = useRef<HTMLDivElement>(null);
+  useDialogA11y(true, onClose, viewerRef);
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4" role="dialog" aria-modal="true" aria-label="Media viewer" onClick={onClose}>
-      <button onClick={onClose} aria-label="Close viewer" className="absolute right-4 top-4 flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full bg-white/10 text-white">
-        <X className="h-5 w-5" />
+    <div
+      ref={viewerRef}
+      tabIndex={-1}
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Media viewer"
+      onClick={onClose}
+    >
+      <button type="button" onClick={onClose} aria-label="Close viewer" className="absolute right-4 top-4 flex min-h-[48px] min-w-[48px] items-center justify-center rounded-full bg-white/10 text-white">
+        <X className="h-5 w-5" aria-hidden="true" />
       </button>
       <div className="max-h-[90svh] max-w-4xl overflow-hidden rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        {type === "image" ? (
+        {type === "video" ? (
+          <video src={url} controls autoPlay className="max-h-[90svh] w-auto" />
+        ) : type === "image" ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={url} alt="Post media fullscreen" className="max-h-[90svh] w-auto object-contain" />
         ) : (
-          <video src={url} controls autoPlay className="max-h-[90svh] w-auto" />
+          // Documents are opened, not previewed as images.
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex min-h-[48px] items-center rounded-xl border border-white/20 bg-white/10 px-6 text-sm font-medium text-white"
+          >
+            Open attachment
+          </a>
         )}
       </div>
     </div>
   );
 }
 
-function ReportForm({ onSubmit, onCancel }: { onSubmit: (reason: string) => void; onCancel: () => void }) {
-  const [reason, setReason] = useState("");
+function ReportForm({ onSubmit, onCancel }: { onSubmit: (reason: string, details?: string) => void; onCancel: () => void }) {
+  const [reason, setReason] = useState("spam");
+  const [details, setDetails] = useState("");
   return (
     <form
       className="space-y-3"
       onSubmit={(e) => {
         e.preventDefault();
-        if (reason.trim()) onSubmit(reason.trim());
+        if (reason) onSubmit(reason, details);
       }}
     >
-      <label htmlFor="report-reason" className="text-sm font-medium">Why are you reporting this?</label>
-      <Textarea id="report-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={100} placeholder="Spam, harassment, inappropriate content…" rows={3} />
+      <div className="space-y-2">
+        <label htmlFor="report-reason" className="text-sm font-medium">Why are you reporting this?</label>
+        <select
+          id="report-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          className="min-h-[44px] w-full rounded-xl border border-input bg-background px-3 text-sm"
+        >
+          <option value="spam">Spam</option>
+          <option value="harassment">Harassment</option>
+          <option value="bullying">Bullying</option>
+          <option value="hate">Hate speech</option>
+          <option value="sexual_content">Sexual content</option>
+          <option value="violence">Violence</option>
+          <option value="self_harm">Self-harm</option>
+          <option value="impersonation">Impersonation</option>
+          <option value="privacy">Privacy violation</option>
+          <option value="copyright">Copyright</option>
+          <option value="misinformation">Misinformation</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div className="space-y-2">
+        <label htmlFor="report-details" className="text-sm font-medium">Details (optional)</label>
+        <Textarea id="report-details" value={details} onChange={(e) => setDetails(e.target.value)} maxLength={2000} placeholder="Add context for moderators…" rows={3} />
+      </div>
       <div className="flex gap-2">
         <Button type="button" variant="outline" className="flex-1" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" className="flex-1" disabled={!reason.trim()}>Submit report</Button>
+        <Button type="submit" className="flex-1">Submit report</Button>
       </div>
     </form>
   );
@@ -610,6 +794,7 @@ interface CommentItem {
   content: string;
   created_at: string;
   author_id: string;
+  reply_count?: number;
   author: { id: string; username: string; display_name: string | null; avatar_url: string | null } | null;
 }
 
@@ -658,25 +843,16 @@ function CommentsSection({ postId, currentUserId, onCountChange }: {
       });
       const data = await res.json();
       if (!res.ok) throw new Error("Failed to post comment");
-      setComments((prev) => [...prev, data.comment]);
-      onCountChange(comments.length + 1);
+      // Derive the new list first, then report the count from that same snapshot
+      // (the previous `comments.length + 1` read a stale closure and drifted).
+      const next = [...comments, data.comment];
+      setComments(next);
+      onCountChange(next.length);
       setDraft("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to post comment");
     } finally {
       setIsPosting(false);
-    }
-  };
-
-  const deleteComment = async (id: string) => {
-    const prev = comments;
-    setComments((c) => c.filter((x) => x.id !== id));
-    try {
-      const res = await fetch(`/api/comments?id=${id}`, { method: "DELETE" });
-      if (!res.ok) setComments(prev);
-      else onCountChange(prev.length - 1);
-    } catch {
-      setComments(prev);
     }
   };
 
@@ -689,28 +865,20 @@ function CommentsSection({ postId, currentUserId, onCountChange }: {
       )}
       <ul className="space-y-2">
         {comments.map((c) => (
-          <li key={c.id} className="flex gap-2">
-            <Avatar className="h-8 w-8 shrink-0">
-              <AvatarImage src={c.author?.avatar_url || ""} alt="" />
-              <AvatarFallback name={c.author?.display_name || c.author?.username} />
-            </Avatar>
-            <div className="min-w-0 flex-1 rounded-xl bg-muted/60 px-3 py-2">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-sm font-medium">{c.author?.display_name || c.author?.username}</span>
-                <time className="shrink-0 text-xs text-muted-foreground">{formatRelativeTime(c.created_at)}</time>
-                {c.author_id === currentUserId && (
-                  <button
-                    onClick={() => deleteComment(c.id)}
-                    className="ml-auto min-h-[32px] shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive"
-                    aria-label="Delete comment"
-                  >
-                    Delete
-                  </button>
-                )}
-              </div>
-              <p className="whitespace-pre-wrap break-words text-sm">{c.content}</p>
-            </div>
-          </li>
+          <CommentRow
+            key={c.id}
+            postId={postId}
+            comment={c}
+            currentUserId={currentUserId}
+            onDeleted={() => {
+              const next = comments.filter((x) => x.id !== c.id);
+              setComments(next);
+              onCountChange(Math.max(0, next.length));
+            }}
+            onReplyAdded={() => {
+              setComments((prev) => prev.map((x) => (x.id === c.id ? { ...x, reply_count: (x.reply_count ?? 0) + 1 } : x)));
+            }}
+          />
         ))}
       </ul>
       {currentUserId && (
@@ -731,5 +899,176 @@ function CommentsSection({ postId, currentUserId, onCountChange }: {
         </form>
       )}
     </div>
+  );
+}
+
+/** One top-level comment with an expandable single-level reply thread. */
+function CommentRow({ postId, comment, currentUserId, onDeleted, onReplyAdded }: {
+  postId: string;
+  comment: CommentItem;
+  currentUserId: string | null;
+  onDeleted: () => void;
+  onReplyAdded: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [replies, setReplies] = useState<CommentItem[]>([]);
+  const [loadingReplies, setLoadingReplies] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [deleted, setDeleted] = useState(false);
+
+  const toggle = async () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+    if (replies.length > 0) return;
+    setLoadingReplies(true);
+    setReplyError(null);
+    try {
+      const res = await fetch(`/api/comments?postId=${postId}&parentId=${comment.id}&limit=20`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "Failed to load replies");
+      setReplies(data.comments ?? []);
+    } catch (e) {
+      setReplyError(e instanceof Error ? e.message : "Failed to load replies");
+    } finally {
+      setLoadingReplies(false);
+    }
+  };
+
+  const submitReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!draft.trim() || !currentUserId || posting) return;
+    setPosting(true);
+    setReplyError(null);
+    try {
+      const res = await fetch("/api/comments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId, content: draft.trim(), parentCommentId: comment.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error("Failed to post reply");
+      setReplies((prev) => [...prev, data.comment]);
+      setDraft("");
+      onReplyAdded();
+    } catch (err) {
+      setReplyError(err instanceof Error ? err.message : "Failed to post reply");
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const remove = async () => {
+    setDeleted(true);
+    try {
+      const res = await fetch(`/api/comments?id=${comment.id}`, { method: "DELETE" });
+      if (!res.ok) setDeleted(false);
+      else onDeleted();
+    } catch {
+      setDeleted(false);
+    }
+  };
+
+  const removeReply = async (id: string) => {
+    const prev = replies;
+    setReplies((r) => r.filter((x) => x.id !== id));
+    try {
+      const res = await fetch(`/api/comments?id=${id}`, { method: "DELETE" });
+      if (!res.ok) setReplies(prev);
+    } catch {
+      setReplies(prev);
+    }
+  };
+
+  if (deleted) return null;
+  const count = comment.reply_count ?? replies.length;
+
+  return (
+    <li className="flex gap-2">
+      <Avatar className="h-8 w-8 shrink-0">
+        <AvatarImage src={comment.author?.avatar_url || ""} alt="" />
+        <AvatarFallback name={comment.author?.display_name || comment.author?.username} />
+      </Avatar>
+      <div className="min-w-0 flex-1 rounded-xl bg-muted/60 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium">{comment.author?.display_name || comment.author?.username}</span>
+          <time className="shrink-0 text-xs text-muted-foreground">{formatRelativeTime(comment.created_at)}</time>
+          {comment.author_id === currentUserId && (
+            <button
+              onClick={remove}
+              className="ml-auto min-h-[44px] shrink-0 px-3 text-xs text-muted-foreground hover:text-destructive"
+              aria-label="Delete comment"
+            >
+              Delete
+            </button>
+          )}
+        </div>
+        <RichText text={comment.content} className="whitespace-pre-wrap break-words text-sm" />
+        <div className="mt-1 flex items-center gap-2">
+          <button
+            onClick={toggle}
+            aria-expanded={open}
+            className="min-h-[44px] rounded-lg px-2 text-xs font-medium text-primary hover:underline"
+          >
+            {open ? "Hide replies" : count > 0 ? `Replies (${count})` : "Reply"}
+          </button>
+        </div>
+        {open && (
+          <div className="mt-2 space-y-2 border-l-2 border-border pl-3">
+            {loadingReplies && <p className="text-xs text-muted-foreground">Loading replies…</p>}
+            {replyError && <p role="alert" className="text-xs text-destructive">{replyError}</p>}
+            {replies.map((r) => (
+              <div key={r.id} className="flex gap-2">
+                <Avatar className="h-7 w-7 shrink-0">
+                  <AvatarImage src={r.author?.avatar_url || ""} alt="" />
+                  <AvatarFallback name={r.author?.display_name || r.author?.username} />
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-[13px] font-medium">{r.author?.display_name || r.author?.username}</span>
+                    <time className="shrink-0 text-[11px] text-muted-foreground">{formatRelativeTime(r.created_at)}</time>
+                    {r.author_id === currentUserId && (
+                      <button
+                        onClick={() => removeReply(r.id)}
+                        className="ml-auto min-h-[28px] shrink-0 px-1.5 text-[11px] text-muted-foreground hover:text-destructive"
+                        aria-label="Delete reply"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                  <RichText text={r.content} className="whitespace-pre-wrap break-words text-[13px]" />
+                </div>
+              </div>
+            ))}
+            {currentUserId ? (
+              <form onSubmit={submitReply} className="flex gap-2">
+                <label htmlFor={`reply-${comment.id}`} className="sr-only">Write a reply</label>
+                <input
+                  id={`reply-${comment.id}`}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  placeholder="Write a reply…"
+                  maxLength={2000}
+                  disabled={posting}
+                  className="min-h-[44px] flex-1 rounded-lg border border-input bg-background px-2.5 text-[13px]"
+                />
+                <Button type="submit" size="sm" className="min-h-[44px] rounded-lg" disabled={posting || !draft.trim()}>
+                  {posting ? "…" : "Reply"}
+                </Button>
+              </form>
+            ) : (
+              !loadingReplies && replies.length === 0 && !replyError && (
+                <p className="text-xs text-muted-foreground">No replies yet.</p>
+              )
+            )}
+          </div>
+        )}
+      </div>
+    </li>
   );
 }

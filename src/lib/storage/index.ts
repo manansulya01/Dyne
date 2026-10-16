@@ -3,7 +3,7 @@ import { LocalStorageDriver } from "./local";
 import { R2StorageDriver } from "./r2";
 
 declare global {
-  // eslint-disable-next-line no-var
+  // `var` is required syntax for global augmentation.
   var __dyneStorageDriver: StorageDriver | undefined;
 }
 

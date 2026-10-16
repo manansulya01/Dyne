@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback, useRef } from "react";
+import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -10,7 +10,8 @@ import { Badge } from "@/components/ui/Badge";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ListSkeleton } from "@/components/ui/Skeleton";
-import { Search, Users, Plus, Lock } from "lucide-react";
+import { Search, Users, Plus, Lock, X } from "lucide-react";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 
 interface CommunityData {
   id: string;
@@ -22,33 +23,38 @@ interface CommunityData {
   is_private: boolean;
   created_at: string;
   member_count: number;
+  post_count: number;
+  last_post_at: string | null;
   is_member: boolean;
   is_owner: boolean;
   member_role: string;
 }
 
-interface CommunitiesPageClientProps {
-  currentUserId: string | null;
-}
-
-export function CommunitiesPageClient({ currentUserId }: CommunitiesPageClientProps) {
-  const router = useRouter();
+export function CommunitiesPageClient() {
   const [communities, setCommunities] = useState<CommunityData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [sort, setSort] = useState<"latest" | "popular" | "discussed">("latest");
 
+  // Cursor/loading refs: fetchCommunities reads these instead of closing over
+  // state, so its identity only changes with the search term and the effect
+  // below can safely depend on it (no fetch loop, no stale pages).
+  const cursorRef = useRef<string | null>(null);
+  const hasMoreRef = useRef(true);
+  const loadingRef = useRef(false);
+
   const fetchCommunities = useCallback(async (isLoadMore = false) => {
-    if (isLoadMore && (!hasMore || isLoading)) return;
+    if (isLoadMore && (!hasMoreRef.current || loadingRef.current)) return;
+    loadingRef.current = true;
     setIsLoading(true);
 
     try {
       const params = new URLSearchParams({ limit: "20" });
-      if (cursor) params.set("cursor", cursor);
+      if (cursorRef.current) params.set("cursor", cursorRef.current);
       if (debouncedSearch) params.set("search", debouncedSearch);
 
       const response = await fetch(`/api/communities?${params.toString()}`);
@@ -60,20 +66,23 @@ export function CommunitiesPageClient({ currentUserId }: CommunitiesPageClientPr
         } else {
           setCommunities(data.communities);
         }
-        setCursor(data.cursor);
-        setHasMore(data.hasMore);
+        cursorRef.current = data.cursor ?? null;
+        hasMoreRef.current = !!data.hasMore;
+        setHasMore(!!data.hasMore);
       }
     } catch (error) {
       console.error("Failed to fetch communities:", error);
     } finally {
+      loadingRef.current = false;
       setIsLoading(false);
     }
-  }, [cursor, debouncedSearch, hasMore, isLoading]);
+  }, [debouncedSearch]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchQuery);
-      setCursor(null);
+      cursorRef.current = null;
+      hasMoreRef.current = true;
       setCommunities([]);
       setHasMore(true);
     }, 300);
@@ -81,13 +90,14 @@ export function CommunitiesPageClient({ currentUserId }: CommunitiesPageClientPr
   }, [searchQuery]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial server-state sync on search change
     fetchCommunities();
-  }, [debouncedSearch]);
+  }, [fetchCommunities]);
 
   const handleCreateCommunity = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
+    setCreateError(null);
 
     try {
       const response = await fetch("/api/communities", {
@@ -108,16 +118,26 @@ export function CommunitiesPageClient({ currentUserId }: CommunitiesPageClientPr
         setShowCreateModal(false);
         e.currentTarget.reset();
       } else {
-        alert(result.error?._form?.[0] || "Failed to create community");
+        setCreateError(
+          typeof result.error === "string"
+            ? result.error
+            : result.error?._form?.[0] || "Failed to create community"
+        );
       }
-    } catch (error) {
-      alert("Failed to create community");
+    } catch {
+      setCreateError("Failed to create community. Please try again.");
     }
   };
 
   // Honest deterministic sorts (client-side over the loaded page).
   const sorted = [...communities].sort((a, b) => {
-    if (sort === "popular" || sort === "discussed") return b.member_count - a.member_count;
+    if (sort === "popular") return b.member_count - a.member_count;
+    if (sort === "discussed") {
+      const al = a.last_post_at ? +new Date(a.last_post_at) : 0;
+      const bl = b.last_post_at ? +new Date(b.last_post_at) : 0;
+      if (bl !== al) return bl - al;
+      return b.member_count - a.member_count;
+    }
     return +new Date(b.created_at) - +new Date(a.created_at);
   });
 
@@ -167,12 +187,7 @@ export function CommunitiesPageClient({ currentUserId }: CommunitiesPageClientPr
 
       <div className="space-y-3">
         {sorted.map(community => (
-          <CommunityCard
-            key={community.id}
-            community={community}
-            currentUserId={currentUserId}
-            router={router}
-          />
+          <CommunityCard key={community.id} community={community} />
         ))}
 
         {communities.length === 0 && !isLoading && (
@@ -200,24 +215,27 @@ export function CommunitiesPageClient({ currentUserId }: CommunitiesPageClientPr
       </div>
 
       {showCreateModal && (
-        <CreateCommunityModal onClose={() => setShowCreateModal(false)} onSubmit={handleCreateCommunity} />
+        <CreateCommunityModal
+          onClose={() => { setShowCreateModal(false); setCreateError(null); }}
+          onSubmit={handleCreateCommunity}
+          error={createError}
+        />
       )}
     </div>
   );
 }
 
-function CommunityCard({ community, currentUserId, router }: { community: CommunityData; currentUserId: string | null; router: ReturnType<typeof useRouter> }) {
-  const isMember = community.is_member;
-
+function CommunityCard({ community }: { community: CommunityData }) {
   return (
-    <Card className="border hover:border-primary/50 transition-colors cursor-pointer"
-      onClick={() => router.push(`/communities/${community.slug}`)}
-    >
+    // Real link (not a click-handling div) so the list is keyboard reachable,
+    // middle-clickable, and announces as a link.
+    <Link href={`/communities/${community.slug}`} className="block rounded-xl focus-visible:outline-2 focus-visible:outline-primary">
+    <Card className="border transition-colors hover:border-primary/50">
       <CardContent className="pt-4 pb-4">
         <div className="flex items-start gap-4">
           <div className="relative h-14 w-14 shrink-0 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
             {community.image_url ? (
-              <Image src={community.image_url} alt="" fill className="object-cover" />
+              <Image src={community.image_url} alt="" fill sizes="56px" className="object-cover" />
             ) : (
               <Users className="h-7 w-7 text-muted-foreground" />
             )}
@@ -254,37 +272,50 @@ function CommunityCard({ community, currentUserId, router }: { community: Commun
         </div>
       </CardContent>
     </Card>
+    </Link>
   );
 }
 
-function CreateCommunityModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (e: React.FormEvent<HTMLFormElement>) => void }) {
+function CreateCommunityModal({ onClose, onSubmit, error }: { onClose: () => void; onSubmit: (e: React.FormEvent<HTMLFormElement>) => void; error: string | null }) {
+  // Escape closes, background scroll locks, focus is trapped and restored.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogA11y(true, onClose, dialogRef);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-background rounded-lg p-6 w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose} aria-hidden="true">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="bg-background rounded-lg p-6 w-full max-w-md mx-4 max-h-[90svh] overflow-y-auto"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create community"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold">Create Community</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            ✕
+          <button type="button" onClick={onClose} aria-label="Close" className="flex min-h-[44px] min-w-[44px] items-center justify-center text-muted-foreground hover:text-foreground">
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium mb-1">Name</label>
-            <Input name="name" required maxLength={100} />
+            <label htmlFor="community-name" className="block text-sm font-medium mb-1">Name</label>
+            <Input id="community-name" name="name" required maxLength={100} />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Slug</label>
-            <Input name="slug" required maxLength={50} placeholder="community-name" />
+            <label htmlFor="community-slug" className="block text-sm font-medium mb-1">Slug</label>
+            <Input id="community-slug" name="slug" required maxLength={50} placeholder="community-name" />
             <p className="text-xs text-muted-foreground mt-1">Lowercase letters, numbers, and hyphens only</p>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Description (optional)</label>
-            <textarea name="description" className="w-full p-2 border rounded-md" rows={3} maxLength={2000} />
+            <label htmlFor="community-description" className="block text-sm font-medium mb-1">Description (optional)</label>
+            <textarea id="community-description" name="description" className="w-full p-2 border rounded-md" rows={3} maxLength={2000} />
           </div>
           <div className="flex items-center gap-2">
             <input type="checkbox" name="isPrivate" id="isPrivate" className="rounded" />
             <label htmlFor="isPrivate" className="text-sm">Private community</label>
           </div>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           <div className="flex gap-2 pt-4">
             <Button type="button" variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
             <Button type="submit" className="flex-1">Create</Button>

@@ -77,7 +77,7 @@ export async function GET(request: Request) {
 
   const rows = await col(db, "savedPosts")
     .find(filter as never)
-    .sort({ createdAt: -1 })
+    .sort({ createdAt: -1, _id: -1 })
     .limit(limit)
     .toArray();
 

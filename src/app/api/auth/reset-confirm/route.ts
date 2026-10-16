@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/lib/mongo/client";
 import { consumePasswordReset } from "@/lib/auth/passwordReset";
+import { rateLimit, clientKey, RATE_PRESETS } from "@/lib/security/rateLimit";
 
 const resetConfirmSchema = z
   .object({
@@ -16,6 +17,10 @@ const resetConfirmSchema = z
 
 /** Complete a forgot-password flow with the single-use reset token. */
 export async function POST(request: Request) {
+  const rl = rateLimit(`reset-confirm:${clientKey(request)}`, RATE_PRESETS.passwordReset.limit, RATE_PRESETS.passwordReset.windowMs);
+  if (!rl.ok) {
+    return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
+  }
   const body = (await request.json().catch(() => null)) as unknown;
   const validated = resetConfirmSchema.safeParse(body);
 

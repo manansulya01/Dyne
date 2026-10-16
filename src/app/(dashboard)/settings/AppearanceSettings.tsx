@@ -73,6 +73,7 @@ export function AppearanceSettings() {
             >
               <option value="comfortable">Comfortable</option>
               <option value="compact">Compact</option>
+              <option value="spacious">Spacious</option>
             </select>
           </div>
           <div>
@@ -99,6 +100,7 @@ export function AppearanceSettings() {
             >
               <option value="full">Full</option>
               <option value="reduced">Reduced</option>
+              <option value="minimal">Minimal</option>
             </select>
           </div>
         </div>

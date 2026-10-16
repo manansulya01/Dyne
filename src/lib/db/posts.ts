@@ -9,6 +9,7 @@ export interface CreatePostInput {
   authorId: string | ObjectId;
   content?: string | null;
   media?: MediaItem[];
+  post_type?: string;
 }
 
 /** Create a post. Requires text or at least one media item. */
@@ -26,6 +27,7 @@ export async function createPost(db: Db, input: CreatePostInput) {
     authorId: toObjectId(input.authorId),
     content,
     media,
+    post_type: input.post_type ?? "post",
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -49,7 +51,7 @@ export async function listPosts(db: Db, filter: PostFilter = {}) {
   if (filter.before) query.createdAt = { $lt: filter.before };
   const rows = await col<PostDoc>(db, "posts")
     .find(query as never)
-    .sort({ createdAt: -1 })
+    .sort({ createdAt: -1, _id: -1 })
     .limit(limit)
     .toArray();
   const withCounts = await attachCounts(db, rows);
@@ -102,20 +104,45 @@ export async function getPost(db: Db, id: string | ObjectId) {  const row = awai
 
 /** Soft-delete an owned post. Returns false when missing or not owned. */
 export async function deleteOwnPost(db: Db, id: string | ObjectId, authorId: string | ObjectId) {
+  const pid = toObjectId(id);
   const res = await col<PostDoc>(db, "posts").updateOne(
-    { _id: toObjectId(id), authorId: toObjectId(authorId), deletedAt: null } as never,
+    { _id: pid, authorId: toObjectId(authorId), deletedAt: null } as never,
     { $set: { deletedAt: new Date(), updatedAt: new Date() } }
   );
-  return res.matchedCount === 1;
+  if (res.matchedCount !== 1) return false;
+  await cascadePostDependents(db, pid);
+  return true;
 }
 
 /** Soft-delete for moderation (admin/moderator path, authorization checked by caller). */
 export async function removePost(db: Db, id: string | ObjectId) {
+  const pid = toObjectId(id);
   const res = await col<PostDoc>(db, "posts").updateOne(
-    { _id: toObjectId(id) } as never,
+    { _id: pid } as never,
     { $set: { deletedAt: new Date(), updatedAt: new Date() } }
   );
-  return res.matchedCount === 1;
+  if (res.matchedCount !== 1) return false;
+  await cascadePostDependents(db, pid);
+  return true;
+}
+
+/**
+ * A soft-deleted post must leave no live dependents: saved lists, reactions,
+ * comment threads, reports, and notifications would otherwise keep showing or
+ * counting removed content.
+ */
+async function cascadePostDependents(db: Db, postId: ObjectId) {
+  const hex = postId.toHexString();
+  await Promise.all([
+    col(db, "savedPosts").deleteMany({ postId } as never),
+    col(db, "reactions").deleteMany({ targetType: "post", targetId: postId } as never),
+    col(db, "comments").updateMany(
+      { postId } as never,
+      { $set: { deletedAt: new Date(), updatedAt: new Date() } } as never
+    ),
+    col(db, "reports").deleteMany({ targetType: "post", targetId: postId } as never),
+    col(db, "notifications").deleteMany({ "data.post_id": hex } as never),
+  ]);
 }
 
 async function attachCounts(db: Db, rows: PostDoc[]) {

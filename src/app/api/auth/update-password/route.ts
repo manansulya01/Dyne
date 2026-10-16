@@ -4,6 +4,8 @@ import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/mongo/client";
 import { updatePasswordSchema } from "@/lib/validation";
 import { setPasswordHash } from "@/lib/db/users";
+import { readFormData } from "@/lib/utils";
+import { rateLimit, clientKey, RATE_PRESETS } from "@/lib/security/rateLimit";
 import {
   createSession,
   destroyAllUserSessions,
@@ -17,7 +19,14 @@ import {
  * fresh one so the user stays signed in on this device only.
  */
 export async function POST(request: Request) {
-  const formData = await request.formData();
+  const rl = rateLimit(`update-password:${clientKey(request)}`, RATE_PRESETS.passwordReset.limit, RATE_PRESETS.passwordReset.windowMs);
+  if (!rl.ok) {
+    return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
+  }
+  const formData = await readFormData(request);
+  if (!formData) {
+    return NextResponse.json({ error: "Invalid request format" }, { status: 400 });
+  }
 
   const validated = updatePasswordSchema.safeParse({
     password: formData.get("password"),

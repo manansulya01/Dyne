@@ -3,19 +3,24 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { formatRelativeTime } from "@/lib/utils";
+import { apiErrorMessage, formatRelativeTime } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
+import { ErrorState } from "@/components/ui/EmptyState";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/Avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { Separator } from "@/components/ui/Separator";
+import { BottomSheet } from "@/components/ui/Sheet";
+import { Textarea } from "@/components/ui/Textarea";
 import {
   User,
   Users,
   Edit,
-  MoreHorizontal,
   UserPlus,
   UserMinus,
+  Share2,
+  Flag,
+  CalendarDays,
 } from "lucide-react";
 
 interface ProfileData {
@@ -30,6 +35,7 @@ interface ProfileData {
   class_grade: string | null;
   house: string | null;
   interests: string[];
+  profile_tags: string[];
   created_at: string;
   followers_count: number;
   following_count: number;
@@ -69,6 +75,9 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
   const [isLoading, setIsLoading] = useState(!initialProfile);
   const [activeTab, setActiveTab] = useState("posts");
   const [isFollowing, setIsFollowing] = useState(initialProfile?.is_following || false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+  const [reportStatus, setReportStatus] = useState<string | null>(null);
 
   const fetchProfile = useCallback(async () => {
     setIsLoading(true);
@@ -171,7 +180,7 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
             <div className="flex-1 text-center md:text-left">
               <div className="flex items-center justify-center md:justify-start gap-2 mb-2">
                 <h1 className="text-2xl font-bold">{profile.display_name || profile.username}</h1>
-                {profile.roles.includes("admin") && (
+                {(profile.roles.includes("admin") || profile.roles.includes("super_admin")) && (
                   <span className="px-2 py-0.5 text-xs bg-red-100 text-red-700 rounded-full">Admin</span>
                 )}
                 {profile.roles.includes("teacher") && (
@@ -182,6 +191,9 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
                 )}
                 {profile.roles.includes("club") && (
                   <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded-full">Club</span>
+                )}
+                {profile.roles.includes("moderator") && (
+                  <span className="px-2 py-0.5 text-xs bg-amber-100 text-amber-800 rounded-full">Moderator</span>
                 )}
               </div>
               <p className="text-muted-foreground">@{profile.username}</p>
@@ -231,9 +243,32 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
                   </Button>
                 )}
                 {!isOwnProfile && (
-                  <Button variant="ghost" size="icon">
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="min-h-[44px] min-w-[44px]"
+                      onClick={async () => {
+                        const url = `${window.location.origin}/profile/${profile.username}`;
+                        try {
+                          if (navigator.share) await navigator.share({ title: `${profile.display_name || profile.username} on Dyne`, url });
+                          else await navigator.clipboard.writeText(url);
+                        } catch { /* dismissed */ }
+                      }}
+                      aria-label="Share profile"
+                    >
+                      <Share2 className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="min-h-[44px] min-w-[44px]"
+                      onClick={() => setReportOpen(true)}
+                      aria-label="Report profile"
+                    >
+                      <Flag className="h-4 w-4" />
+                    </Button>
+                  </>
                 )}
               </div>
             </div>
@@ -246,7 +281,7 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
           )}
 
           {profile.interests.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-2" aria-label="Interests">
               {profile.interests.map((interest) => (
                 <span key={interest} className="px-2 py-1 text-sm bg-muted rounded-full">
                   {interest}
@@ -255,18 +290,39 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
             </div>
           )}
 
+          {(profile.profile_tags ?? []).length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Profile tags">
+              {(profile.profile_tags ?? []).map((tag) => (
+                <span key={tag} className="rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold tracking-wide text-primary">
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
+
           <Separator className="my-6" />
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="flex w-full">
               <TabsTrigger value="posts" className="min-h-[44px]">Posts</TabsTrigger>
+              <TabsTrigger value="media" className="min-h-[44px]">Media</TabsTrigger>
+              <TabsTrigger value="communities" className="min-h-[44px]">Groups</TabsTrigger>
+              <TabsTrigger value="events" className="min-h-[44px]">Events</TabsTrigger>
               <TabsTrigger value="reactions" className="min-h-[44px]">Likes</TabsTrigger>
               <TabsTrigger value="saved" className="min-h-[44px]">Saved</TabsTrigger>
-              <TabsTrigger value="media" className="min-h-[44px]">Media</TabsTrigger>
             </TabsList>
 
             <TabsContent value="posts" className="mt-4">
               <ProfilePosts username={profile.username} />
+            </TabsContent>
+            <TabsContent value="media" className="mt-4">
+              <ProfileMedia username={profile.username} />
+            </TabsContent>
+            <TabsContent value="communities" className="mt-4">
+              <ProfileCommunities userId={profile.id} />
+            </TabsContent>
+            <TabsContent value="events" className="mt-4">
+              <ProfileEvents userId={profile.id} />
             </TabsContent>
             <TabsContent value="reactions" className="mt-4">
               {profile.is_own ? (
@@ -282,12 +338,38 @@ export function ProfilePageClient({ initialProfile, currentUser, targetUsername 
                 <p className="text-center text-muted-foreground py-8">Saved posts are private</p>
               )}
             </TabsContent>
-            <TabsContent value="media" className="mt-4">
-              <ProfileMedia username={profile.username} />
-            </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
+
+      <BottomSheet open={reportOpen} onClose={() => { setReportOpen(false); setReportReason(""); }} title="Report profile">
+        <form
+          className="space-y-3"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!reportReason.trim()) return;
+            try {
+              const res = await fetch("/api/reports", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ targetType: "user", targetId: profile.id, reason: "other", description: reportReason.trim() }),
+              });
+              setReportStatus(res.ok ? "Thanks — moderators will review this profile." : "Could not submit the report.");
+              if (res.ok) {
+                setReportOpen(false);
+                setReportReason("");
+              }
+            } catch {
+              setReportStatus("Could not submit the report.");
+            }
+          }}
+        >
+          <label htmlFor="profile-report-reason" className="text-sm font-medium">Why are you reporting @{profile.username}?</label>
+          <Textarea id="profile-report-reason" value={reportReason} onChange={(e) => setReportReason(e.target.value)} maxLength={2000} rows={3} placeholder="Impersonation, spam, harassment…" />
+          <Button type="submit" className="w-full" disabled={!reportReason.trim()}>Submit report</Button>
+        </form>
+      </BottomSheet>
+      {reportStatus && <p role="status" className="mt-3 text-center text-sm text-muted-foreground">{reportStatus}</p>}
 
       <p className="text-center text-sm text-muted-foreground mt-4">
         Joined {formatRelativeTime(profile.created_at)}
@@ -379,18 +461,25 @@ function ProfilePosts({ username }: { username: string }) {
 function ProfileLikedPosts() {
   const [posts, setPosts] = useState<PostWithRelations[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     fetch("/api/posts/liked?limit=20")
-      .then((res) => res.json())
+      .then(async (res) => {
+        const data = await res.json();
+        // A failed request must not render as a false "no liked posts" empty state.
+        if (!res.ok) throw new Error(await apiErrorMessage(res, "Could not load liked posts"));
+        return data;
+      })
       .then((data) => { if (!cancelled) setPosts(data.posts ?? []); })
-      .catch(() => {})
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "Could not load liked posts"); })
       .finally(() => { if (!cancelled) setIsLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
   if (isLoading) return <p className="text-center text-muted-foreground py-8">Loading…</p>;
+  if (error) return <ErrorState title="Could not load liked posts" description={error} />;
   if (posts.length === 0) return <p className="text-center text-muted-foreground py-8">No liked posts yet</p>;
   return (
     <div className="space-y-4">
@@ -404,18 +493,24 @@ function ProfileLikedPosts() {
 function ProfileSavedPosts() {
   const [posts, setPosts] = useState<PostWithRelations[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     fetch("/api/saved-posts?limit=20")
-      .then((res) => res.json())
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(await apiErrorMessage(res, "Could not load saved posts"));
+        return data;
+      })
       .then((data) => { if (!cancelled) setPosts(data.posts ?? []); })
-      .catch(() => {})
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "Could not load saved posts"); })
       .finally(() => { if (!cancelled) setIsLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
   if (isLoading) return <p className="text-center text-muted-foreground py-8">Loading…</p>;
+  if (error) return <ErrorState title="Could not load saved posts" description={error} />;
   if (posts.length === 0) return <p className="text-center text-muted-foreground py-8">No saved posts yet</p>;
   return (
     <div className="space-y-4">
@@ -429,22 +524,28 @@ function ProfileSavedPosts() {
 function ProfileMedia({ username }: { username: string }) {
   const [items, setItems] = useState<Array<{ id: string; media_type: "image" | "video"; url: string }>>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/posts?limit=50&author=${encodeURIComponent(username)}`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(await apiErrorMessage(res, "Could not load media"));
+        return data;
+      })
       .then((data) => {
         if (cancelled) return;
         const media = ((data.posts ?? []) as PostWithRelations[]).flatMap((p) => p.media ?? []);
         setItems(media);
       })
-      .catch(() => {})
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "Could not load media"); })
       .finally(() => { if (!cancelled) setIsLoading(false); });
     return () => { cancelled = true; };
   }, [username]);
 
   if (isLoading) return <p className="text-center text-muted-foreground py-8">Loading…</p>;
+  if (error) return <ErrorState title="Could not load media" description={error} />;
   if (items.length === 0) return <p className="text-center text-muted-foreground py-8">No media yet</p>;
   return (
     <div className="grid grid-cols-3 gap-2">
@@ -458,6 +559,95 @@ function ProfileMedia({ username }: { username: string }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function ProfileCommunities({ userId }: { userId: string }) {
+  const [items, setItems] = useState<Array<{ id: string; slug: string; name: string; description: string | null; member_count: number; is_private: boolean }>>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/communities?member=${userId}&limit=30`)
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(await apiErrorMessage(res, "Could not load communities"));
+        return data;
+      })
+      .then((data) => { if (!cancelled) setItems(data.communities ?? []); })
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "Could not load communities"); })
+      .finally(() => { if (!cancelled) setIsLoading(false); });
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  if (isLoading) return <p className="py-8 text-center text-muted-foreground">Loading…</p>;
+  if (error) return <ErrorState title="Could not load communities" description={error} />;
+  if (items.length === 0) return <p className="py-8 text-center text-muted-foreground">No visible communities yet</p>;
+  return (
+    <ul className="space-y-2">
+      {items.map((c) => (
+        <li key={c.id}>
+          <a href={`/communities/${c.slug}`} className="dyne-card dyne-card-hover flex items-center gap-3 p-3.5">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <Users className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-semibold">{c.name}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {c.member_count} member{c.member_count === 1 ? "" : "s"}{c.is_private ? " · Private" : ""}
+              </span>
+            </span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ProfileEvents({ userId }: { userId: string }) {
+  const [items, setItems] = useState<Array<{ id: string; title: string; start_time: string; location: { name?: string } | null; attendee_count: number }>>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [org, att] = await Promise.all([
+          fetch(`/api/events?organizerId=${userId}&limit=20`).then((r) => r.json()),
+          fetch(`/api/events?attendeeId=${userId}&limit=20`).then((r) => r.json()),
+        ]);
+        if (cancelled) return;
+        const seen = new Map<string, (typeof items)[number]>();
+        for (const e of [...(org.events ?? []), ...(att.events ?? [])]) seen.set(e.id, e);
+        setItems([...seen.values()].sort((a, b) => +new Date(a.start_time) - +new Date(b.start_time)));
+      } catch { /* empty state covers */ }
+      finally { if (!cancelled) setIsLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  if (isLoading) return <p className="py-8 text-center text-muted-foreground">Loading…</p>;
+  if (items.length === 0) return <p className="py-8 text-center text-muted-foreground">No events yet</p>;
+  return (
+    <ul className="space-y-2">
+      {items.map((e) => (
+        <li key={e.id}>
+          <a href={`/events/${e.id}`} className="dyne-card dyne-card-hover flex items-center gap-3 p-3.5">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <CalendarDays className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-semibold">{e.title}</span>
+              <span className="block truncate text-xs text-muted-foreground">
+                {formatRelativeTime(e.start_time)}
+                {e.location?.name ? ` · ${e.location.name}` : ""} · {e.attendee_count} going
+              </span>
+            </span>
+          </a>
+        </li>
+      ))}
+    </ul>
   );
 }
 

@@ -1,5 +1,7 @@
 import { Db, ObjectId } from "mongodb";
 import { col, type CollectionName } from "@/lib/mongo/collections";
+import { toObjectId } from "@/lib/mongo/ids";
+import { resolveAuthors } from "./authors";
 import { serializeMany } from "./serialize";
 
 type Hit = { _id: ObjectId; deletedAt?: Date | null } & Record<string, unknown>;
@@ -12,7 +14,10 @@ export interface SearchResults {
   buildings: unknown[];
   clubs: unknown[];
   videos: unknown[];
+  reels: unknown[];
   blogs: unknown[];
+  studyMaterials: unknown[];
+  announcements: unknown[];
 }
 
 const empty: SearchResults = {
@@ -23,7 +28,10 @@ const empty: SearchResults = {
   buildings: [],
   clubs: [],
   videos: [],
+  reels: [],
   blogs: [],
+  studyMaterials: [],
+  announcements: [],
 };
 
 /**
@@ -67,7 +75,7 @@ export async function globalSearch(
   let communityFilter: Record<string, unknown> | undefined;
   let eventFilter: Record<string, unknown> | undefined;
   if (!opts?.isAdmin && opts?.userId) {
-    const uid = opts.userId instanceof ObjectId ? opts.userId : new ObjectId(opts.userId);
+    const uid = opts.userId instanceof ObjectId ? opts.userId : toObjectId(opts.userId);
     const [memberships, attendances] = await Promise.all([
       col(db, "communityMembers").find({ userId: uid } as never).project({ communityId: 1 }).toArray(),
       col(db, "eventAttendees").find({ userId: uid } as never).project({ eventId: 1 }).toArray(),
@@ -91,16 +99,57 @@ export async function globalSearch(
     eventFilter = { isPublic: true };
   }
 
-  const [people, posts, communities, events, buildings, clubs, videos, blogs] = await Promise.all([
+  // Private teacher/admin artefacts (draft assignments, draft exams, held
+  // content) are NEVER searchable — only published/approved rows are included.
+  const approvedContent = { $or: [{ moderationStatus: "approved" }, { moderationStatus: { $exists: false } }] };
+  const now = new Date();
+
+  const [
+    people, posts, communities, events, buildings, clubs, videos, reels, blogs, studyMaterials, announcements,
+  ] = await Promise.all([
     top("users", { username: 1, displayName: 1, avatarUrl: 1, role: 1 }),
     top("posts"),
     top("communities", undefined, communityFilter),
     top("events", undefined, eventFilter),
     top("buildings"),
     top("clubs"),
-    top("videos"),
-    top("blogs", { title: 1, slug: 1, excerpt: 1, coverImageUrl: 1, category: 1, publishedAt: 1 }, { isPublished: true }),
+    top("videos", { title: 1, category: 1, thumbnailUrl: 1, createdAt: 1 }, approvedContent),
+    top("reels", { title: 1, category: 1, thumbnailUrl: 1, createdAt: 1 }, { moderationStatus: "approved" }),
+    top("blogs", { title: 1, slug: 1, excerpt: 1, coverImageUrl: 1, category: 1, publishedAt: 1 }, {
+      isPublished: true,
+      $or: [{ moderationStatus: "approved" }, { moderationStatus: { $exists: false } }],
+    }),
+    col(db, "studyMaterials")
+      .find({ title: { $regex: escapeRegExp(q), $options: "i" }, isRemoved: { $ne: true }, status: "approved" } as never)
+      .project({ title: 1, subject: 1, classGrade: 1, materialType: 1 })
+      .limit(6)
+      .toArray() as unknown as Promise<Hit[]>,
+    col(db, "announcements")
+      .find({
+        title: { $regex: escapeRegExp(q), $options: "i" },
+        $and: [
+          { $or: [{ startsAt: null }, { startsAt: { $lte: now } }] },
+          { $or: [{ endsAt: null }, { endsAt: { $gte: now } }] },
+        ],
+      } as never)
+      .project({ title: 1, body: 1, category: 1, priority: 1, isPinned: 1, createdAt: 1 })
+      .sort({ isPinned: -1, createdAt: -1 })
+      .limit(6)
+      .toArray() as unknown as Promise<Hit[]>,
   ]);
+
+  // Post hits arrive without authors (the projection is minimal), so the UI
+  // previously rendered every search result as "Unknown". Resolve them here.
+  if (posts.length > 0) {
+    const authors = await resolveAuthors(
+      db,
+      posts.map((p) => p.authorId).filter((v): v is ObjectId => v instanceof ObjectId)
+    );
+    for (const p of posts) {
+      const uid = p.authorId ? String(p.authorId) : null;
+      p.author = uid ? authors.get(uid) ?? null : null;
+    }
+  }
 
   // People search should also match usernames by prefix (text search ranks
   // full words; prefix covers handle typing). Merged server-side, deduped.
@@ -125,7 +174,10 @@ export async function globalSearch(
     buildings: serializeMany(buildings),
     clubs: serializeMany(clubs),
     videos: serializeMany(videos),
+    reels: serializeMany(reels),
     blogs: serializeMany(blogs),
+    studyMaterials: serializeMany(studyMaterials),
+    announcements: serializeMany(announcements),
   };
 }
 

@@ -6,6 +6,7 @@ import { createReport, listReports } from "@/lib/db/reports";
 import { toReportJSON } from "@/lib/db/contracts";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 import { parseLimitParam } from "@/lib/utils";
+import { rateLimit, clientKey, RATE_PRESETS } from "@/lib/security/rateLimit";
 import type { ReportStatus } from "@/lib/mongo/collections";
 
 async function authed() {
@@ -24,6 +25,11 @@ export async function POST(request: Request) {
   const ctx = await authed();
   if ("error" in ctx) return ctx.error;
   const { db, user } = ctx;
+
+  const rl = rateLimit(`reports:${clientKey(request, user.id)}`, RATE_PRESETS.reports.limit, RATE_PRESETS.reports.windowMs);
+  if (!rl.ok) {
+    return NextResponse.json({ error: "Too many requests. Please try again later." }, { status: 429 });
+  }
 
   const body = await request.json().catch(() => null);
   const validated = reportCreateSchema.safeParse({
@@ -70,7 +76,17 @@ export async function GET(request: Request) {
     if (!isNaN(+parsed)) before = parsed;
   }
 
-  const validStatus: ReportStatus[] = ["pending", "reviewing", "resolved", "dismissed"];
+  const validStatus: ReportStatus[] = [
+    "pending",
+    "reviewing",
+    "resolved",
+    "dismissed",
+    "OPEN",
+    "UNDER_REVIEW",
+    "ACTION_TAKEN",
+    "DISMISSED",
+    "ESCALATED",
+  ];
   const { reports, isModerator } = await listReports(db, user.id, user.role, {
     status: status && (validStatus as string[]).includes(status) ? (status as ReportStatus) : undefined,
     limit,

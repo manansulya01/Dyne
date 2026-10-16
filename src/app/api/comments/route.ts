@@ -7,11 +7,14 @@ import {
   createComment,
   deleteComment,
   listComments,
+  listReplies,
 } from "@/lib/db/comments";
 import { getCommentReactionCounts } from "@/lib/db/reactions";
 import { createNotification } from "@/lib/db/notifications";
 import { toCommentJSON } from "@/lib/db/contracts";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { hasPermission } from "@/lib/permissions";
+import { rateLimit, clientKey, RATE_PRESETS } from "@/lib/security/rateLimit";
 import { parseLimitParam } from "@/lib/utils";
 
 async function authed() {
@@ -33,10 +36,31 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const postId = searchParams.get("postId");
+  const parentId = searchParams.get("parentId");
   const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
 
   if (!postId || !objectIdSchema.safeParse(postId).success) {
     return NextResponse.json({ error: "Post ID required" }, { status: 400 });
+  }
+
+  if (parentId) {
+    if (!objectIdSchema.safeParse(parentId).success) {
+      return NextResponse.json({ error: "Invalid parent comment" }, { status: 400 });
+    }
+    const replies = await listReplies(db, postId, parentId, limit);
+    if (!replies) {
+      return NextResponse.json({ error: "Comment not found" }, { status: 404 });
+    }
+    const counts = await getCommentReactionCounts(
+      db,
+      replies.map((c) => String((c as unknown as Record<string, unknown>).id))
+    );
+    return NextResponse.json({
+      comments: replies.map((c) => {
+        const row = c as unknown as Record<string, unknown>;
+        return toCommentJSON({ ...row, reactionCount: counts.get(String(row.id)) ?? 0 });
+      }),
+    });
   }
 
   const comments = await listComments(db, postId, limit);
@@ -56,6 +80,11 @@ export async function POST(request: Request) {
   const ctx = await authed();
   if ("error" in ctx) return ctx.error;
   const { db, user } = ctx;
+
+  const rl = rateLimit(`comments:${clientKey(request, user.id)}`, RATE_PRESETS.comments.limit, RATE_PRESETS.comments.windowMs);
+  if (!rl.ok) {
+    return NextResponse.json({ error: "Too many requests. Please try again later." }, { status: 429 });
+  }
 
   const body = await request.json().catch(() => null);
   const validated = commentCreateSchema.safeParse(body);
@@ -145,7 +174,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Comment ID required" }, { status: 400 });
   }
 
-  const removed = await deleteComment(db, commentId, user.id, user.role === "admin");
+  const removed = await deleteComment(db, commentId, user.id, hasPermission(user.role, "comments.remove"));
   if (!removed) {
     // Distinguish missing (404) from forbidden (403) without leaking.
     const exists = await col(db, "comments").findOne({ _id: toObjectId(commentId) } as never);

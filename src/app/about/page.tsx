@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 const PILLARS = [
   { icon: Users, title: "People", body: "Discover classmates, follow friends and clubs, and build your campus circle — all inside a private MVA-only network." },
-  { icon: MessagesSquare, title: "Communities & conversation", body: "Course groups, societies, and hobby circles with real discussion threads, polls, and moderation — plus direct and group messaging." },
+  { icon: MessagesSquare, title: "Communities & conversation", body: "Course groups, societies, and hobby circles with real discussion threads, polls, and moderation — plus group conversation scoped to the communities and channels you belong to." },
   { icon: CalendarDays, title: "Events & schedule", body: "Upcoming MVA events with honest RSVP counts, a campus schedule hub, weekly timetable, and one unified calendar." },
   { icon: Building2, title: "Campus", body: "Buildings, clubs, and useful campus information — connected to the communities and events that use them." },
   { icon: Clapperboard, title: "Watch", body: "Lectures, highlights, and student creativity on Dyne Watch, with real views, reactions, and creator profiles." },

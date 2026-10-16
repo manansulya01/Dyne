@@ -7,10 +7,11 @@ import { toProfileJSON } from "@/lib/db/contracts";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 
 // Locally-served avatar URLs are relative (/api/files/...); accept those
-// plus absolute https URLs.
+// plus absolute https URLs (http is rejected: mixed-content + SSRF-adjacent
+// risks when clients fetch the URL server-side for previews/OG images).
 const avatarSchema = z.object({
   avatarUrl: z.string().max(2000).refine(
-    (url) => url.startsWith("/api/files/") || /^https?:\/\/.+/i.test(url),
+    (url) => url.startsWith("/api/files/") || /^https:\/\/.+/i.test(url),
     "Invalid avatar URL"
   ),
 });

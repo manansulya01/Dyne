@@ -2,6 +2,7 @@ import { Db, ObjectId } from "mongodb";
 import { col, type UserDoc, type UserRole } from "@/lib/mongo/collections";
 import { hashPassword } from "@/lib/auth/password";
 import { toObjectId } from "@/lib/mongo/ids";
+import { sanitizeProfileTags } from "@/lib/constants/profileTags";
 
 export interface CreateUserInput {
   email: string;
@@ -49,8 +50,11 @@ export async function createUser(db: Db, input: CreateUserInput): Promise<Create
       classGrade: null,
       house: null,
       interests: [],
+      profileTags: [],
       emailVerifiedAt: null,
       suspendedUntil: null,
+      bannedAt: null,
+      banReason: null,
       createdAt: now,
       updatedAt: now,
     } as never);
@@ -90,6 +94,7 @@ export interface UpdateProfileInput {
   classGrade?: string | null;
   house?: string | null;
   interests?: string[];
+  profileTags?: string[];
 }
 
 /** Update a user's own editable profile fields. Returns the updated doc. */
@@ -103,6 +108,7 @@ export async function updateOwnProfile(db: Db, userId: string | ObjectId, input:
   if (input.classGrade !== undefined) patch.classGrade = input.classGrade;
   if (input.house !== undefined) patch.house = input.house;
   if (input.interests !== undefined) patch.interests = input.interests.slice(0, 10);
+  if (input.profileTags !== undefined) patch.profileTags = sanitizeProfileTags(input.profileTags);
 
   const res = await col<UserDoc>(db, "users").findOneAndUpdate(
     { _id: toObjectId(userId) } as never,
@@ -121,7 +127,9 @@ export async function setUserRole(db: Db, userId: string | ObjectId, role: UserR
 }
 
 /** True while the account's suspension is in effect (temp or permanent ban). */
-export function isSuspended(user: Pick<UserDoc, "suspendedUntil"> | null | undefined): boolean {
+export function isSuspended(user: Pick<UserDoc, "suspendedUntil" | "bannedAt"> | null | undefined): boolean {
+  if (!user) return false;
+  if (user.bannedAt) return true;
   return !!user?.suspendedUntil && user.suspendedUntil.getTime() > Date.now();
 }
 
@@ -147,10 +155,26 @@ export async function unsuspendUser(db: Db, userId: string | ObjectId): Promise<
   return res.matchedCount === 1;
 }
 
+/**
+ * Replace a password hash.
+ *
+ * A completed rotation always clears `mustChangePassword`: the user has now
+ * chosen their own secret, so the forced-rotation screen must stop looping.
+ * Callers that intentionally re-flag the account (an admin setting a password
+ * on a user's behalf) set the flag again immediately afterwards.
+ */
 export async function setPasswordHash(db: Db, userId: string | ObjectId, password: string): Promise<void> {
+  const now = new Date();
   await col<UserDoc>(db, "users").updateOne(
     { _id: toObjectId(userId) } as never,
-    { $set: { passwordHash: await hashPassword(password), updatedAt: new Date() } }
+    {
+      $set: {
+        passwordHash: await hashPassword(password),
+        passwordUpdatedAt: now,
+        mustChangePassword: false,
+        updatedAt: now,
+      },
+    }
   );
 }
 

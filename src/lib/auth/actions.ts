@@ -9,7 +9,7 @@ import { loginSchema, signupSchema, resetPasswordSchema, updatePasswordSchema } 
 import { findUserByEmail } from "@/lib/db/users";
 import { createUser } from "@/lib/db/users";
 import { verifyPassword } from "@/lib/auth/password";
-import { consoleMailer, issuePasswordReset } from "@/lib/auth/passwordReset";
+import { getPasswordResetMailer, issuePasswordReset } from "@/lib/auth/passwordReset";
 import { setPasswordHash } from "@/lib/db/users";
 import {
   createSession,
@@ -45,6 +45,9 @@ export async function loginAction(formData: FormData) {
   }
 
   if (user.suspendedUntil && user.suspendedUntil.getTime() > Date.now()) {
+    return { error: { _form: ["This account is suspended. Contact an administrator."] } };
+  }
+  if (user.bannedAt) {
     return { error: { _form: ["This account is suspended. Contact an administrator."] } };
   }
 
@@ -118,7 +121,7 @@ export async function resetPasswordAction(formData: FormData) {
   const db = await getDb();
   const user = await findUserByEmail(db, validated.data.email);
   if (user) {
-    await issuePasswordReset(db, user._id, consoleMailer, user.email);
+    await issuePasswordReset(db, user._id, getPasswordResetMailer(), user.email);
   }
 
   return { success: true };

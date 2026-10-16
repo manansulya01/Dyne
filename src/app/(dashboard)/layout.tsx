@@ -18,5 +18,12 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
+  // Flagged accounts (bootstrap, admin-forced reset, admin-set password) may
+  // authenticate but are confined to the password-change screen until they
+  // rotate their credential.
+  if (full.mustChangePassword) {
+    redirect("/update-password?reason=forced");
+  }
+
   return <DashboardClientLayout profile={toProfileJSON(full as unknown as Record<string, unknown>)}>{children}</DashboardClientLayout>;
 }

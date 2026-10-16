@@ -35,7 +35,17 @@ export async function requireProfile() {
 
 export async function isAdmin(userId: string): Promise<boolean> {
   const full = await getFullUser(userId);
-  return full?.role === "admin";
+  return full?.role === "admin" || full?.role === "super_admin";
+}
+
+export async function isModerator(userId: string): Promise<boolean> {
+  const full = await getFullUser(userId);
+  return (
+    full?.role === "moderator" ||
+    full?.role === "admin" ||
+    full?.role === "super_admin" ||
+    full?.role === "staff"
+  );
 }
 
 export async function getUserRoles(userId: string): Promise<string[]> {

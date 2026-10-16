@@ -23,6 +23,7 @@ interface ProfileData {
   class_grade: string | null;
   house: string | null;
   interests: string[];
+  profile_tags: string[];
   created_at: string;
   followers_count: number;
   following_count: number;

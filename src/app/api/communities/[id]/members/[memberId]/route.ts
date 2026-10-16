@@ -4,6 +4,7 @@ import { ensureIndexes } from "@/lib/mongo/collections";
 import { objectIdSchema } from "@/lib/mongo/ids";
 import { setMemberRole } from "@/lib/db/communities";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { isAdminRole } from "@/lib/permissions";
 
 export async function PATCH(
   request: Request,
@@ -31,11 +32,11 @@ export async function PATCH(
   const body = await request.json().catch(() => null);
   const { role } = body ?? {};
 
-  if (!["member", "moderator"].includes(role)) {
+  if (!["member", "moderator", "admin"].includes(role)) {
     return NextResponse.json({ error: "Invalid role" }, { status: 400 });
   }
 
-  const result = await setMemberRole(db, id, memberId, user.id, role, user.role === "admin");
+  const result = await setMemberRole(db, id, memberId, user.id, role, isAdminRole(user.role));
   if (!result.ok) {
     if (result.reason === "not_found") {
       return NextResponse.json({ error: "Community not found" }, { status: 404 });
@@ -46,8 +47,9 @@ export async function PATCH(
     const messages: Record<string, string> = {
       forbidden: "Forbidden",
       cannot_change_owner: "Cannot change owner's role",
-      owner_only_promote: "Only owners can assign moderator role",
-      owner_only_demote: "Only owners can demote moderators",
+      owner_only_promote: "Only owners and admins can assign moderator role",
+      owner_only_demote: "Only owners and admins can demote moderators",
+      owner_only_admin: "Only the community owner can assign the admin role",
     };
     return NextResponse.json(
       { error: messages[result.reason] ?? "Forbidden" },

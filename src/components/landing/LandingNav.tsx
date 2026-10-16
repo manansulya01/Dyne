@@ -6,9 +6,8 @@ import { Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
 const LINKS = [
-  { label: "Explore", href: "#explore" },
-  { label: "Communities", href: "#communities" },
-  { label: "Campus", href: "#campus" },
+  { label: "Campus", href: "/#campus" },
+  { label: "Communities", href: "/#communities" },
   { label: "Stories", href: "/blogs" },
   { label: "About", href: "/about" },
 ];
@@ -38,19 +37,23 @@ export default function LandingNav() {
           ))}
         </nav>
         <div className="hidden items-center gap-3 md:flex">
-          <Link href="/login">
-            <Button
-              variant="ghost"
-              className="text-zinc-200 hover:bg-white/10 hover:text-white focus-visible:ring-cyan-300"
+          {/* asChild: renders one anchor instead of <a><button> nesting. */}
+          <Button asChild variant="ghost">
+            <Link
+              href="/login"
+              className="inline-flex min-h-[44px] items-center justify-center px-4 text-zinc-200 hover:bg-white/10 hover:text-white focus-visible:ring-cyan-300"
             >
               Log in
-            </Button>
-          </Link>
-          <Link href="/signup">
-            <Button className="bg-cyan-400 text-zinc-950 hover:bg-cyan-300 focus-visible:ring-cyan-200">
+            </Link>
+          </Button>
+          <Button asChild>
+            <Link
+              href="/signup"
+              className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-cyan-400 px-4 text-zinc-950 hover:bg-cyan-300 focus-visible:ring-cyan-200"
+            >
               Join Dyne
-            </Button>
-          </Link>
+            </Link>
+          </Button>
         </div>
         <button
           type="button"
@@ -76,14 +79,22 @@ export default function LandingNav() {
             </Link>
           ))}
           <div className="mt-3 flex flex-col gap-2">
-            <Link href="/login" onClick={() => setOpen(false)}>
-              <Button variant="outline" className="w-full border-white/20 bg-transparent text-white hover:bg-white/10">
+            <Button asChild variant="outline" onClick={() => setOpen(false)}>
+              <Link
+                href="/login"
+                className="inline-flex min-h-[44px] w-full items-center justify-center border-white/20 bg-transparent text-white hover:bg-white/10"
+              >
                 Log in
-              </Button>
-            </Link>
-            <Link href="/signup" onClick={() => setOpen(false)}>
-              <Button className="w-full bg-cyan-400 text-zinc-950 hover:bg-cyan-300">Join Dyne</Button>
-            </Link>
+              </Link>
+            </Button>
+            <Button asChild onClick={() => setOpen(false)}>
+              <Link
+                href="/signup"
+                className="inline-flex min-h-[44px] w-full items-center justify-center bg-cyan-400 text-zinc-950 hover:bg-cyan-300"
+              >
+                Join Dyne
+              </Link>
+            </Button>
           </div>
         </nav>
       )}

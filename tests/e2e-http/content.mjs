@@ -59,12 +59,18 @@ function makeClient() {
 
 const A = makeClient(); // will become admin/teacher
 const B = makeClient(); // student
+const C = makeClient(); // will become club
+const D = makeClient(); // will become admin
 
 await A.signup("contenta@school.test", "contenta_e2e", "Content A");
 await B.signup("contentb@school.test", "contentb_e2e", "Content B");
+await C.signup("contentc@school.test", "contentc_e2e", "Content C");
+await D.signup("contentd@school.test", "contentd_e2e", "Content D");
 execFileSync(process.execPath, ["scripts/promote.mjs", "contenta@school.test", "teacher"], { stdio: "pipe" });
+execFileSync(process.execPath, ["scripts/promote.mjs", "contentc@school.test", "club"], { stdio: "pipe" });
+execFileSync(process.execPath, ["scripts/promote.mjs", "contentd@school.test", "admin"], { stdio: "pipe" });
 
-// Blogs: student cannot publish, teacher can; public list works.
+// Blogs: only teacher/club/admin publishing roles can create; students denied.
 {
   const denied = await B.req("POST", "/api/blogs", json({ title: "Sneaky post", content: "This body is long enough to pass validation rules here." }));
   check("student blog publish 403", denied.status === 403, `status=${denied.status}`);
@@ -74,6 +80,18 @@ execFileSync(process.execPath, ["scripts/promote.mjs", "contenta@school.test", "
     json({ title: "MVA Science Fest", category: "Announcements", content: "The annual science fest returns with demos, talks, and workshops.", isPublished: true, isFeatured: true })
   );
   check("teacher blog publish 201", created.status === 201, `status=${created.status}`);
+  const clubPost = await C.req(
+    "POST",
+    "/api/blogs",
+    json({ title: "Robotics Club Update", content: "The robotics club won the regional qualifier this weekend." })
+  );
+  check("club blog publish 201", clubPost.status === 201, `status=${clubPost.status}`);
+  const adminPost = await D.req(
+    "POST",
+    "/api/blogs",
+    json({ title: "Admin Notice", content: "Scheduled maintenance for the campus portal on Sunday." })
+  );
+  check("admin blog publish 201", adminPost.status === 201, `status=${adminPost.status}`);
   const list = await B.req("GET", "/api/blogs?limit=10");
   check("blog list visible", list.status === 200 && (list.data?.blogs || []).length >= 1, `status=${list.status}`);
   const slug = list.data.blogs[0].slug;

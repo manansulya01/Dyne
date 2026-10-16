@@ -21,7 +21,7 @@ export async function createPoll(db: Db, authorId: string | ObjectId, input: { c
 }
 
 export async function listPolls(db: Db, communityId: string, limit = 20, viewerId?: string | ObjectId) {
-  const rows = await col<PollDoc>(db, "polls").find({ communityId: toObjectId(communityId) } as never).sort({ createdAt: -1 }).limit(safeLimit(limit, 50)).toArray();
+  const rows = await col<PollDoc>(db, "polls").find({ communityId: toObjectId(communityId) } as never).sort({ createdAt: -1, _id: -1 }).limit(safeLimit(limit, 50)).toArray();
   const authors = await resolveAuthors(db, rows.map((r) => r.authorId));
   const votes = await col<PollVoteDoc>(db, "pollVotes").aggregate([
     { $match: { pollId: { $in: rows.map((r) => r._id) } } },
@@ -53,7 +53,7 @@ export async function votePoll(db: Db, pollId: string, userId: string | ObjectId
   if (!role) return { ok: false as const, reason: "forbidden" as const };
   await col<PollVoteDoc>(db, "pollVotes").updateOne(
     { pollId: poll._id, userId: toObjectId(userId) } as never,
-    { $set: { optionIndex, createdAt: new Date() } },
+    { $set: { optionIndex, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
     { upsert: true }
   );
   return { ok: true as const };

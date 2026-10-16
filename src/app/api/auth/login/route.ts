@@ -5,6 +5,8 @@ import { ensureIndexes } from "@/lib/mongo/collections";
 import { loginSchema } from "@/lib/validation";
 import { findUserByEmail } from "@/lib/db/users";
 import { verifyPassword } from "@/lib/auth/password";
+import { readFormData } from "@/lib/utils";
+import { rateLimit, clientKey, RATE_PRESETS } from "@/lib/security/rateLimit";
 import {
   createSession,
   SESSION_COOKIE,
@@ -12,7 +14,14 @@ import {
 } from "@/lib/auth/session";
 
 export async function POST(request: Request) {
-  const formData = await request.formData();
+  const rl = rateLimit(`login:${clientKey(request)}`, RATE_PRESETS.login.limit, RATE_PRESETS.login.windowMs);
+  if (!rl.ok) {
+    return NextResponse.json({ error: "Too many attempts. Try again shortly." }, { status: 429 });
+  }
+  const formData = await readFormData(request);
+  if (!formData) {
+    return NextResponse.json({ error: "Invalid request format" }, { status: 400 });
+  }
 
   const validated = loginSchema.safeParse({
     email: formData.get("email"),
@@ -48,6 +57,12 @@ export async function POST(request: Request) {
       { status: 403 }
     );
   }
+  if (user.bannedAt) {
+    return NextResponse.json(
+      { error: { _form: ["This account is suspended. Contact an administrator."] } },
+      { status: 403 }
+    );
+  }
 
   const { token, expiresAt } = await createSession(
     db,
@@ -59,6 +74,17 @@ export async function POST(request: Request) {
     ...sessionCookieOptions(),
     expires: expiresAt,
   });
+
+  // Flagged accounts (bootstrap, forced reset, admin-set password) may sign in
+  // but MUST rotate their password before using the product. The session is
+  // additionally restricted to the password-change route until they do.
+  if (user.mustChangePassword) {
+    return NextResponse.json({
+      success: true,
+      mustChangePassword: true,
+      redirectTo: "/update-password?reason=forced",
+    });
+  }
 
   return NextResponse.json({ success: true });
 }

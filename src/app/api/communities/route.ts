@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes, col, type CommunityDoc } from "@/lib/mongo/collections";
-import { toObjectId } from "@/lib/mongo/ids";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { communityCreateSchema } from "@/lib/validation";
 import { createCommunity } from "@/lib/db/communities";
 import { resolveAuthors } from "@/lib/db/authors";
 import { toCommunityJSON } from "@/lib/db/contracts";
 import { parseLimitParam } from "@/lib/utils";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session"
+import { isAdminRole } from "@/lib/permissions";
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -34,6 +35,7 @@ export async function GET(request: Request) {
   const search = (searchParams.get("search") || "").trim().slice(0, 100);
   const cursor = searchParams.get("cursor");
   const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
+  const memberParam = searchParams.get("member");
 
   const uid = toObjectId(user.id);
   const and: Record<string, unknown>[] = [];
@@ -41,8 +43,24 @@ export async function GET(request: Request) {
     const rx = { $regex: escapeRegExp(search), $options: "i" };
     and.push({ $or: [{ name: rx }, { description: rx }] });
   }
+  // Profile tab (?member=): communities the target user belongs to. Private
+  // ones stay hidden unless the viewer may see them (member, owner, admin,
+  // or the target themselves) — enforced below after membership resolution.
+  let memberTarget: { id: ReturnType<typeof toObjectId>; communityIds: ReturnType<typeof toObjectId>[] } | null = null;
+  if (memberParam) {
+    if (!objectIdSchema.safeParse(memberParam).success) {
+      return NextResponse.json({ error: "Invalid member id" }, { status: 400 });
+    }
+    const targetId = toObjectId(memberParam);
+    const targetRows = await col(db, "communityMembers")
+      .find({ userId: targetId } as never)
+      .project({ communityId: 1 })
+      .toArray();
+    memberTarget = { id: targetId, communityIds: targetRows.map((m) => m.communityId) };
+    and.push({ _id: { $in: memberTarget.communityIds } });
+  }
   // Private communities are visible only to members, the owner, and admins.
-  if (user.role !== "admin") {
+  if (!isAdminRole(user.role)) {
     const mine = await col(db, "communityMembers")
       .find({ userId: uid } as never)
       .project({ communityId: 1 })
@@ -63,7 +81,7 @@ export async function GET(request: Request) {
     .toArray();
 
   const ids = rows.map((c) => c._id);
-  const [counts, memberships, owners] = await Promise.all([
+  const [counts, memberships, owners, activity] = await Promise.all([
     ids.length
       ? col(db, "communityMembers")
           .aggregate([
@@ -81,15 +99,28 @@ export async function GET(request: Request) {
       db,
       rows.map((c) => c.ownerId)
     ),
+    // Recent-post activity for the honest "Discussed" sort (single aggregation).
+    ids.length
+      ? col(db, "communityPosts")
+          .aggregate([
+            { $match: { communityId: { $in: ids } } },
+            { $group: { _id: "$communityId", n: { $sum: 1 }, last: { $max: "$createdAt" } } },
+          ])
+          .toArray()
+      : Promise.resolve([]),
   ]);
   const countMap = new Map(counts.map((c) => [String(c._id), c.n as number]));
+  const activityMap = new Map(activity.map((a) => [String(a._id), a as { n: number; last: Date }]));
   const roleMap = new Map(memberships.map((m) => [m.communityId.toHexString(), m.role as string]));
 
   const communities = rows.map((c) => {
     const role = roleMap.get(c._id.toHexString());
+    const act = activityMap.get(c._id.toHexString());
     return toCommunityJSON({
       ...c,
       memberCount: countMap.get(c._id.toHexString()) ?? 0,
+      postCount: act?.n ?? 0,
+      lastPostAt: act?.last ?? null,
       isMember: !!role,
       isOwner: c.ownerId.equals(toObjectId(user.id)),
       memberRole: role ?? "none",

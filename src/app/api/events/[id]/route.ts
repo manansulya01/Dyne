@@ -5,7 +5,8 @@ import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { eventCreateSchema } from "@/lib/validation";
 import { resolveAuthors } from "@/lib/db/authors";
 import { toEventJSON } from "@/lib/db/contracts";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session"
+import { isAdminRole } from "@/lib/permissions";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -67,7 +68,7 @@ export async function GET(_request: Request, { params }: Params) {
   if (!event) {
     return NextResponse.json({ error: "Event not found" }, { status: 404 });
   }
-  if (!event.isPublic && !event.organizerId.equals(toObjectId(user.id)) && user.role !== "admin") {
+  if (!event.isPublic && !event.organizerId.equals(toObjectId(user.id)) && !isAdminRole(user.role)) {
     const attendee = await col<EventAttendeeDoc>(db, "eventAttendees").findOne({
       eventId: event._id,
       userId: toObjectId(user.id),
@@ -112,7 +113,7 @@ export async function PATCH(request: Request, { params }: Params) {
   if (!event) {
     return NextResponse.json({ error: "Event not found" }, { status: 404 });
   }
-  if (!event.organizerId.equals(toObjectId(user.id)) && user.role !== "admin") {
+  if (!event.organizerId.equals(toObjectId(user.id)) && !isAdminRole(user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -197,7 +198,7 @@ export async function DELETE(_request: Request, { params }: Params) {
   if (!event) {
     return NextResponse.json({ error: "Event not found" }, { status: 404 });
   }
-  if (!event.organizerId.equals(toObjectId(user.id)) && user.role !== "admin") {
+  if (!event.organizerId.equals(toObjectId(user.id)) && !isAdminRole(user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

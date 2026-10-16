@@ -11,6 +11,24 @@ import { resolveAuthors } from "./authors";
 import { serializeMany } from "./serialize";
 import { safeLimit } from "@/lib/utils";
 
+const MOD_ROLES = ["moderator", "admin", "super_admin", "staff", "teacher"];
+
+/** Normalize legacy lowercase statuses to canonical uppercase. */
+export function normalizeReportStatus(s: string): ReportStatus {
+  const map: Record<string, ReportStatus> = {
+    pending: "OPEN",
+    reviewing: "UNDER_REVIEW",
+    resolved: "ACTION_TAKEN",
+    dismissed: "DISMISSED",
+    OPEN: "OPEN",
+    UNDER_REVIEW: "UNDER_REVIEW",
+    ACTION_TAKEN: "ACTION_TAKEN",
+    DISMISSED: "DISMISSED",
+    ESCALATED: "ESCALATED",
+  };
+  return map[s] ?? "OPEN";
+}
+
 export async function createReport(
   db: Db,
   reporterId: string | ObjectId,
@@ -28,7 +46,11 @@ export async function createReport(
           ? "videos"
           : input.targetType === "community"
             ? "communities"
-            : "users";
+            : input.targetType === "study_material"
+              ? "studyMaterials"
+              : input.targetType === "message"
+                ? "chatMessages"
+                : "users";
   const target = await col(db, targetCollection).findOne(targetFilter);
   if (!target) return { ok: false as const, reason: "not_found" as const };
   const now = new Date();
@@ -38,7 +60,7 @@ export async function createReport(
     targetId: toObjectId(input.targetId),
     reason: input.reason.trim().slice(0, 100),
     description: input.description?.trim().slice(0, 2000) || null,
-    status: "pending",
+    status: "OPEN",
     reviewedBy: null,
     reviewedAt: null,
     createdAt: now,
@@ -52,20 +74,40 @@ export async function listReports(
   viewerRole: string,
   opts: { status?: ReportStatus; limit?: number; before?: Date } = {}
 ) {
-  const isMod = ["admin", "teacher", "staff"].includes(viewerRole);
+  const isMod = MOD_ROLES.includes(viewerRole);
   const filter: Record<string, unknown> = {};
   if (!isMod) filter.reporterId = toObjectId(viewerId);
-  if (opts.status) filter.status = opts.status;
+  if (opts.status) {
+    // Accept both legacy and canonical statuses on filter.
+    const legacyMap: Record<string, string[]> = {
+      OPEN: ["OPEN", "pending"],
+      UNDER_REVIEW: ["UNDER_REVIEW", "reviewing"],
+      ACTION_TAKEN: ["ACTION_TAKEN", "resolved"],
+      DISMISSED: ["DISMISSED", "dismissed"],
+      ESCALATED: ["ESCALATED"],
+      pending: ["pending", "OPEN"],
+      reviewing: ["reviewing", "UNDER_REVIEW"],
+      resolved: ["resolved", "ACTION_TAKEN"],
+      dismissed: ["dismissed", "DISMISSED"],
+    };
+    const vals = legacyMap[opts.status] ?? [opts.status];
+    filter.status = vals.length === 1 ? vals[0] : { $in: vals };
+  }
   if (opts.before) filter.createdAt = { $lt: opts.before };
   const rows = await col<ReportDoc>(db, "reports")
     .find(filter as never)
-    .sort({ createdAt: -1 })
+    .sort({ createdAt: -1, _id: -1 })
     .limit(safeLimit(opts.limit, 50))
     .toArray();
   const authors = await resolveAuthors(db, rows.map((r) => r.reporterId));
   return {
     reports: serializeMany(
-      rows.map((r) => ({ ...r, reporter: authors.get(r.reporterId.toHexString()) ?? null }))
+      rows.map((r) => ({
+        ...r,
+        // Private moderator notes are never exposed to ordinary users.
+        moderatorNotes: isMod ? (r as Record<string, unknown>).moderatorNotes ?? null : undefined,
+        reporter: authors.get(r.reporterId.toHexString()) ?? null,
+      }))
     ),
     isModerator: isMod,
   };
@@ -77,7 +119,7 @@ export async function reviewReport(
   moderatorId: string | ObjectId,
   moderatorRole: string,
   input: {
-    status: Exclude<ReportStatus, "pending">;
+    status: ReportStatus;
     action?: ModerationActionDoc["action"];
     reason?: string | null;
     moderatorNotes?: string | null;
@@ -85,7 +127,7 @@ export async function reviewReport(
     durationDays?: number;
   }
 ) {
-  if (!["admin", "teacher", "staff"].includes(moderatorRole)) {
+  if (!MOD_ROLES.includes(moderatorRole)) {
     return { ok: false as const, reason: "forbidden" as const };
   }
   const rid = toObjectId(reportId);

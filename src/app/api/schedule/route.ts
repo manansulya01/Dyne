@@ -5,7 +5,8 @@ import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { resolveAuthors } from "@/lib/db/authors";
 import { toEventJSON } from "@/lib/db/contracts";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
-import { listTimetable, listAnnouncements } from "@/lib/db/content";
+import { listTimetable } from "@/lib/db/content";
+import { listAnnouncements } from "@/lib/db/announcements";
 import { safeLimit } from "@/lib/utils";
 
 /**
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
 
   const [events, announcements, timetable] = await Promise.all([
     col<EventDoc>(db, "events").find({ startTime: { $gte: now }, isPublic: true } as never).sort({ startTime: 1 }).limit(limit).toArray(),
-    listAnnouncements(db, { limit: 10 }),
+    listAnnouncements(db, { limit: 10, viewerRole: user.role, viewerId: user.id }),
     listTimetable(db),
   ]);
 

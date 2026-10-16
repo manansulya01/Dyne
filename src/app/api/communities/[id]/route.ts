@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes, col, type CommunityDoc } from "@/lib/mongo/collections";
 import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
@@ -6,7 +7,8 @@ import { communityCreateSchema } from "@/lib/validation";
 import { getCommunity, memberRole, updateCommunity } from "@/lib/db/communities";
 import { resolveAuthors } from "@/lib/db/authors";
 import { toCommunityJSON } from "@/lib/db/contracts";
-import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { requireSessionUser, toHttpError } from "@/lib/auth/session"
+import { isAdminRole } from "@/lib/permissions";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -61,7 +63,7 @@ export async function GET(_request: Request, { params }: Params) {
     community.isPrivate &&
     !role &&
     !community.ownerId.equals(toObjectId(user.id)) &&
-    user.role !== "admin"
+    !isAdminRole(user.role)
   ) {
     return NextResponse.json({ error: "This community is private" }, { status: 403 });
   }
@@ -102,16 +104,16 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   let canEdit =
-    community.ownerId.equals(toObjectId(user.id)) || user.role === "admin";
+    community.ownerId.equals(toObjectId(user.id)) || isAdminRole(user.role);
   if (!canEdit) {
     const role = await memberRole(db, id, user.id);
-    canEdit = role === "moderator" || role === "owner";
+    canEdit = role === "admin" || role === "moderator" || role === "owner";
   }
   if (!canEdit) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const patch: { name?: string; description?: string | null; isPrivate?: boolean } = {};
+  const patch: { name?: string; description?: string | null; isPrivate?: boolean; rules?: string[] } = {};
   if (validated.data.name !== undefined) patch.name = validated.data.name;
   // description: only when the client sent the key (allows clearing to null).
   if ("description" in rawBody) patch.description = validated.data.description ?? null;
@@ -119,12 +121,20 @@ export async function PATCH(request: Request, { params }: Params) {
   if ("isPrivate" in rawBody && validated.data.isPrivate !== undefined) {
     patch.isPrivate = validated.data.isPrivate;
   }
+  // rules: validated separately (array of short strings, max 10).
+  if ("rules" in rawBody) {
+    const parsed = z.array(z.string().min(1).max(200)).max(10).safeParse(rawBody.rules);
+    if (!parsed.success) {
+      return NextResponse.json({ error: { rules: ["Up to 10 rules, 200 characters each"] } }, { status: 400 });
+    }
+    patch.rules = parsed.data;
+  }
   const result = await updateCommunity(
     db,
     id,
     user.id,
     patch,
-    user.role === "admin"
+    isAdminRole(user.role)
   );
   if (!result.ok) {
     if (result.reason === "forbidden") {
@@ -151,7 +161,7 @@ export async function DELETE(_request: Request, { params }: Params) {
     return NextResponse.json({ error: "Community not found" }, { status: 404 });
   }
 
-  if (!community.ownerId.equals(toObjectId(user.id)) && user.role !== "admin") {
+  if (!community.ownerId.equals(toObjectId(user.id)) && !isAdminRole(user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

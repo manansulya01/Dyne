@@ -35,27 +35,35 @@ export default function Hero() {
           communities, discover events, and share your campus life — all in one place.
         </p>
         <div className="pointer-events-auto mt-10 flex w-full max-w-md flex-col items-stretch gap-3 sm:max-w-none sm:flex-row sm:items-center sm:justify-center">
-          <Link href="/signup">
-            <Button
-              size="lg"
+          {/* asChild: one focusable element instead of <a><button> nesting. */}
+          <Button asChild size="lg">
+            <Link
+              href="/signup"
               className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 bg-cyan-400 text-base text-zinc-950 hover:bg-cyan-300 focus-visible:ring-cyan-200 sm:w-auto sm:px-8"
             >
               Join Dyne <ArrowRight className="h-5 w-5" aria-hidden="true" />
-            </Button>
-          </Link>
-          <Link href="/login">
-            <Button
-              size="lg"
-              variant="outline"
+            </Link>
+          </Button>
+          <Button asChild size="lg" variant="outline">
+            <Link
+              href="/login"
               className="inline-flex min-h-[48px] w-full items-center justify-center border-white/25 bg-white/5 text-base text-white backdrop-blur hover:bg-white/15 hover:text-white focus-visible:ring-cyan-200 sm:w-auto sm:px-8"
             >
               Log in
-            </Button>
-          </Link>
+            </Link>
+          </Button>
         </div>
         <p className="mt-6 text-sm text-zinc-400">
           Free for every MVA student — sign up with your campus email.
         </p>
+        <a
+          href="#campus"
+          className="pointer-events-auto mt-10 inline-flex min-h-[44px] flex-col items-center gap-1 text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500 hover:text-cyan-300"
+          aria-label="Scroll to explore Dyne"
+        >
+          Explore the story
+          <span className="block h-8 w-px animate-pulse bg-gradient-to-b from-cyan-300/70 to-transparent" aria-hidden="true" />
+        </a>
       </div>
     </section>
   );

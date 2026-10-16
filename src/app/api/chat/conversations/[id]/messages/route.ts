@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo/client";
-import { ensureIndexes, col, type MessageDoc } from "@/lib/mongo/collections";
+import { ensureIndexes, col, type MessageDoc, type PendingMediaDoc } from "@/lib/mongo/collections";
 import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { messageCreateSchema } from "@/lib/validation";
 import { listMessages, sendMessage } from "@/lib/db/chat";
@@ -8,6 +8,8 @@ import { createNotification } from "@/lib/db/notifications";
 import { toMessageJSON } from "@/lib/db/contracts";
 import { parseLimitParam } from "@/lib/utils";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
+import { rateLimit, clientKey, RATE_PRESETS } from "@/lib/security/rateLimit";
+import { logAudit } from "@/lib/security/audit";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -37,8 +39,14 @@ export async function GET(request: Request, { params }: Params) {
   const { searchParams } = new URL(request.url);
   const limit = parseLimitParam(searchParams.get("limit"), 50, 100);
 
-  const result = await listMessages(db, id, user.id, limit);
+  const result = await listMessages(db, id, user.id, limit, { viewerRole: user.role });
   if (!result.ok) {
+    if (result.reason === "direct_disabled") {
+      return NextResponse.json(
+        { error: "Direct messages are disabled. Use community group chats." },
+        { status: 403 }
+      );
+    }
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const mapped = result.messages.map((m) =>
@@ -57,6 +65,11 @@ export async function POST(request: Request, { params }: Params) {
   if ("error" in ctx) return ctx.error;
   const { db, user } = ctx;
 
+  const rl = rateLimit(`messages:${clientKey(request, user.id)}`, RATE_PRESETS.messages.limit, RATE_PRESETS.messages.windowMs);
+  if (!rl.ok) {
+    return NextResponse.json({ error: "Too many requests. Please try again later." }, { status: 429 });
+  }
+
   const body = await request.json().catch(() => null);
   const validated = messageCreateSchema.safeParse(body);
   if (!validated.success) {
@@ -71,10 +84,50 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: "Conversation mismatch" }, { status: 400 });
   }
 
-  const sent = await sendMessage(db, id, user.id, validated.data.content, []);
+  // Claim staged uploads as attachments. Ownership + bucket verified: only
+  // the sender's own message-attachments rows can be claimed, and each claim
+  // is deleted so ids cannot be reused across messages.
+  const attachments: Array<{ url: string; mime: string; fileName: string; size: number }> = [];
+  for (const rawId of validated.data.attachmentIds ?? []) {
+    if (!objectIdSchema.safeParse(rawId).success) continue;
+    const staged = await col<PendingMediaDoc>(db, "pendingMedia").findOneAndDelete({
+      _id: toObjectId(rawId),
+      uploaderId: toObjectId(user.id),
+      bucket: "message-attachments",
+    } as never);
+    if (!staged) continue;
+    attachments.push({
+      url: staged.url,
+      mime: staged.mime ?? "application/octet-stream",
+      fileName: staged.originalName ?? "attachment",
+      size: staged.size ?? 0,
+    });
+  }
+
+  const sent = await sendMessage(db, id, user.id, validated.data.content ?? "", attachments);
   if (!sent.ok) {
+    if (sent.reason === "direct_disabled") {
+      return NextResponse.json(
+        { error: "Direct messages are disabled. Use community group chats." },
+        { status: 403 }
+      );
+    }
     if (sent.reason === "forbidden") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (sent.reason === "blocked") {
+      // High-confidence policy violation: nothing is delivered.
+      await logAudit(db, {
+        actorId: user.id,
+        action: "moderation.message.blocked",
+        targetType: "conversation",
+        targetId: id,
+        details: { reason: sent.moderationReason ?? null },
+      });
+      return NextResponse.json(
+        { error: "This message was blocked by campus safety checks." },
+        { status: 422 }
+      );
     }
     if (sent.reason === "too_long") {
       return NextResponse.json({ error: "Message too long" }, { status: 400 });
@@ -107,5 +160,10 @@ export async function POST(request: Request, { params }: Params) {
 
   return NextResponse.json({
     message: row ? toMessageJSON(row as unknown as Record<string, unknown>) : { id: sent.messageId.toHexString() },
+    moderation: {
+      status: sent.moderationStatus,
+      // Held messages stay visible to their author but are flagged for review.
+      heldForReview: sent.heldForReview,
+    },
   });
 }

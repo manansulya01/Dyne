@@ -31,6 +31,7 @@ export class LocalStorageDriver implements StorageDriver {
     return full;
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- StorageDriver requires the MIME arg (R2 sets ContentType); the filesystem driver has no use for it.
   async put(bucket: StorageBucket, key: string, bytes: Uint8Array, _mime: string) {
     const file = this.filePath(bucket, key);
     await mkdir(path.dirname(file), { recursive: true });

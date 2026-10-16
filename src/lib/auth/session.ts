@@ -64,7 +64,8 @@ export async function resolveUserByToken(db: Db, token: string): Promise<Session
   if (!match) return null;
   const user = await col<UserDoc>(db, "users").findOne({ _id: match.userId } as never);
   if (!user) return null;
-  // Suspended accounts lose API access immediately, even with a live session.
+  // Suspended/banned accounts lose API access immediately, even with a live session.
+  if (user.bannedAt) return null;
   if (user.suspendedUntil && user.suspendedUntil.getTime() > Date.now()) return null;
   return {
     id: user._id.toHexString(),
