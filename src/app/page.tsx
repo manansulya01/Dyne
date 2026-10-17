@@ -7,18 +7,18 @@ import WatchCta from "@/components/landing/WatchCta";
 import LandingFooter from "@/components/landing/LandingFooter";
 
 export const metadata: Metadata = {
-  title: "Dyne — Your Campus, Your Community, Your Connection",
+  title: "Dyne — Your Campus, Your Community, Your Network",
   description:
     "Dyne is the private campus social network for Macro Vision Academy. Connect with classmates, join communities, discover events, chat in realtime, and share campus life.",
   openGraph: {
-    title: "Dyne — Your Campus, Your Community, Your Connection",
+    title: "Dyne — Your Campus, Your Community, Your Network",
     description:
       "The private social network for Macro Vision Academy: feed, communities, chat, events, campus guide, and Dyne Watch.",
     type: "website",
   },
   twitter: {
     card: "summary",
-    title: "Dyne — Your Campus, Your Community, Your Connection",
+    title: "Dyne — Your Campus, Your Community, Your Network",
     description:
       "The private social network for Macro Vision Academy: feed, communities, chat, events, campus guide, and Dyne Watch.",
   },
