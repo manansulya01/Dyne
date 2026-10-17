@@ -28,14 +28,13 @@ export default function Hero() {
             Your Community.
           </span>
           <br />
-          Your Connection.
+          Your Network.
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-[clamp(1rem,2.4vw,1.25rem)] leading-relaxed text-zinc-300">
           Dyne is the private social network for Macro Vision Academy. Connect with classmates, join
           communities, discover events, and share your campus life — all in one place.
         </p>
         <div className="pointer-events-auto mt-10 flex w-full max-w-md flex-col items-stretch gap-3 sm:max-w-none sm:flex-row sm:items-center sm:justify-center">
-          {/* asChild: one focusable element instead of <a><button> nesting. */}
           <Button asChild size="lg">
             <Link
               href="/signup"
