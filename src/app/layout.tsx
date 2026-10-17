@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
-const TAGLINE = "Your Campus, Your Community, Your Connection";
+const TAGLINE = "Your Campus, Your Community, Your Network";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
