@@ -7,8 +7,8 @@ import { getStorageDriver } from "@/lib/storage";
 import { mimeForKey } from "@/lib/storage/types";
 
 /**
- * Gated download: authenticated users only; removed/rejected materials are
- * hidden (404, no existence oracle). Raw storage paths are never exposed —
+ * Gated download: authenticated users only; pending, rejected, and removed materials
+ * are hidden (404, no existence oracle). Raw storage paths are never exposed —
  * bytes stream through this route.
  */
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -22,12 +22,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const { status, message } = toHttpError(err);
     return NextResponse.json({ error: message }, { status });
   }
-  void user;
   if (!objectIdSchema.safeParse(id).success) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const row = await col<StudyMaterialDoc>(db, "studyMaterials").findOne({ _id: toObjectId(id) } as never);
-  if (!row || row.isRemoved || row.status === "rejected") {
+  if (!row || row.isRemoved || row.status !== "approved") {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   let file;
@@ -45,7 +44,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       "Content-Length": String(file.bytes.length),
       "Content-Disposition": `attachment; filename="${safeName}"`,
       "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "private, max-age=3600",
+      "Cache-Control": "private, no-store",
     },
   });
 }
