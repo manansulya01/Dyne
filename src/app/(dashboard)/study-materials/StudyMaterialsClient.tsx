@@ -45,6 +45,7 @@ export function StudyMaterialsClient() {
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
+  const [canUpload, setCanUpload] = useState(false);
   const cursorRef = useRef<string | null>(null);
 
   const load = useCallback(async (append = false) => {
@@ -69,6 +70,8 @@ export function StudyMaterialsClient() {
       const res = await fetch(`/api/study-materials?${p.toString()}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load");
+      setCanUpload(data.canUpload === true);
+      if (data.canUpload !== true) setShowUpload(false);
       const list = data.materials ?? [];
       setItems((prev) => (append ? [...prev, ...list] : list));
       cursorRef.current = data.cursor ?? null;
@@ -95,12 +98,14 @@ export function StudyMaterialsClient() {
             Notes, worksheets, assignments and revision material shared by campus.
           </p>
         </div>
-        <Button onClick={() => setShowUpload((v) => !v)} className="min-h-[44px]">
-          {showUpload ? "Close upload" : "Upload material"}
-        </Button>
+        {canUpload && (
+          <Button onClick={() => setShowUpload((v) => !v)} className="min-h-[44px]">
+            {showUpload ? "Close upload" : "Upload material"}
+          </Button>
+        )}
       </div>
 
-      {showUpload && <UploadForm onDone={() => { setShowUpload(false); void load(false); }} />}
+      {canUpload && showUpload && <UploadForm onDone={() => { setShowUpload(false); void load(false); }} /> }
 
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         <div>
@@ -150,7 +155,7 @@ export function StudyMaterialsClient() {
           <p className="mt-1 text-sm text-muted-foreground">
             {sort === "saved"
               ? "Tap Save on any material to build your reading list."
-              : "Upload the first note or worksheet for your class."}
+              : "New notes, worksheets and study material will appear here when teachers share them."}
           </p>
         </div>
       ) : (
