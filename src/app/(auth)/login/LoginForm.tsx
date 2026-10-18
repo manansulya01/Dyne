@@ -47,7 +47,6 @@ export function LoginForm() {
       }
 
       router.refresh();
-      // Flagged accounts are sent straight to the forced rotation screen.
       router.push(
         typeof result.redirectTo === "string" ? result.redirectTo : "/feed"
       );
@@ -114,6 +113,13 @@ export function LoginForm() {
         <div className="space-y-2 text-sm text-center">
           <p>Don&apos;t have an account? <Link href="/signup" className="text-primary hover:underline">Sign up</Link></p>
           <p><Link href="/forgot-password" className="text-primary hover:underline">Forgot password?</Link></p>
+        </div>
+        <div className="w-full border-t pt-4 text-center">
+          <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">School staff</p>
+          <div className="flex flex-wrap justify-center gap-x-5 gap-y-2 text-sm">
+            <Link href="/teacher/login" className="font-medium text-primary hover:underline">Teacher portal</Link>
+            <Link href="/admin/login" className="font-medium text-primary hover:underline">Administrator portal</Link>
+          </div>
         </div>
       </CardFooter>
     </Card>
