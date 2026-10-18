@@ -13,6 +13,8 @@ import {
   sessionCookieOptions,
 } from "@/lib/auth/session";
 
+type StaffPortal = "teacher" | "admin";
+
 export async function POST(request: Request) {
   const rl = rateLimit(`login:${clientKey(request)}`, RATE_PRESETS.login.limit, RATE_PRESETS.login.windowMs);
   if (!rl.ok) {
@@ -22,6 +24,14 @@ export async function POST(request: Request) {
   if (!formData) {
     return NextResponse.json({ error: "Invalid request format" }, { status: 400 });
   }
+
+  const portalValue = formData.get("portal");
+  if (portalValue !== null && portalValue !== "" && portalValue !== "teacher" && portalValue !== "admin") {
+    return NextResponse.json({ error: "Invalid sign-in portal." }, { status: 400 });
+  }
+  const portal = portalValue === "teacher" || portalValue === "admin"
+    ? portalValue as StaffPortal
+    : null;
 
   const validated = loginSchema.safeParse({
     email: formData.get("email"),
@@ -64,6 +74,21 @@ export async function POST(request: Request) {
     );
   }
 
+  // Staff portals are only entry points, never privilege grants. Check the
+  // canonical role in MongoDB before creating a session or setting a cookie.
+  if (portal === "teacher" && user.role !== "teacher") {
+    return NextResponse.json(
+      { error: { _form: ["This account is not authorized for the teacher portal."] } },
+      { status: 403 }
+    );
+  }
+  if (portal === "admin" && user.role !== "admin" && user.role !== "super_admin") {
+    return NextResponse.json(
+      { error: { _form: ["This account is not authorized for the administration portal."] } },
+      { status: 403 }
+    );
+  }
+
   const { token, expiresAt } = await createSession(
     db,
     user._id,
@@ -75,9 +100,7 @@ export async function POST(request: Request) {
     expires: expiresAt,
   });
 
-  // Flagged accounts (bootstrap, forced reset, admin-set password) may sign in
-  // but MUST rotate their password before using the product. The session is
-  // additionally restricted to the password-change route until they do.
+  // Flagged accounts must rotate their password before accessing any portal.
   if (user.mustChangePassword) {
     return NextResponse.json({
       success: true,
@@ -86,5 +109,8 @@ export async function POST(request: Request) {
     });
   }
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({
+    success: true,
+    redirectTo: portal === "admin" ? "/admin" : portal === "teacher" ? "/feed" : "/feed",
+  });
 }
