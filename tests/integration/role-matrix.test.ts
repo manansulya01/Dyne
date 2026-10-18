@@ -3,7 +3,7 @@ process.env.MONGODB_DB = "dyne_test_roles_matrix";
 import { getDb } from "@/lib/mongo/client";
 import { col, ensureIndexes, collectionNames, type UserDoc } from "@/lib/mongo/collections";
 import { createUser, setUserRole } from "@/lib/db/users";
-import { hasPermission, allPermissions, isAdminRole, isTeachingRole, ROLE_PERMISSIONS } from "@/lib/permissions";
+import { canUploadStudyMaterials, hasPermission, allPermissions, isAdminRole, isTeachingRole, ROLE_PERMISSIONS } from "@/lib/permissions";
 
 /**
  * Role matrix regression tests.
@@ -65,6 +65,14 @@ describe("role / permission matrix", () => {
     for (const p of forbidden) {
       expect(hasPermission("student", p as never), `student must not hold ${p}`).toBe(false);
     }
+  });
+
+  it("allows only teacher-role accounts to upload study materials", () => {
+    expect(canUploadStudyMaterials("teacher")).toBe(true);
+    for (const role of ["student", "staff", "club", "moderator", "admin", "super_admin"] as const) {
+      expect(canUploadStudyMaterials(role), `${role} must not upload study files`).toBe(false);
+    }
+    expect(hasPermission("club", "study.upload")).toBe(false);
   });
 
   it("grants students only self-scoped capabilities", () => {
