@@ -7,6 +7,7 @@ import { createStudyMaterial, listStudyMaterials } from "@/lib/db/studyMaterials
 import { toStudyMaterialJSON } from "@/lib/db/contracts";
 import { parseLimitParam } from "@/lib/utils";
 import { guardRate, jsonError, withAnyPermission, withUser } from "@/lib/security/authorize";
+import { canUploadStudyMaterials } from "@/lib/permissions";
 import type { StudyMaterialType } from "@/lib/mongo/collections";
 
 /**
@@ -24,6 +25,9 @@ export async function POST(request: NextRequest) {
   const auth = await withAnyPermission(["study.upload", "study.manage"]);
   if (!auth.ok) return auth.response;
   const { user } = auth.ctx;
+  if (!canUploadStudyMaterials(user.role)) {
+    return jsonError(403, "Only teachers can upload study materials");
+  }
 
   const limited = guardRate(request, user.id, "uploads");
   if (limited) return limited;
@@ -97,5 +101,6 @@ export async function GET(request: NextRequest) {
     materials: mapped,
     cursor: mapped.length ? mapped[mapped.length - 1].created_at : null,
     hasMore: mapped.length === limit,
+    canUpload: canUploadStudyMaterials(user.role),
   });
 }
