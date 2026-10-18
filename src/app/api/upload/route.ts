@@ -13,7 +13,7 @@ import { getStorageDriver } from "@/lib/storage/index";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 import { readFormData } from "@/lib/utils";
 import { rateLimit, clientKey, RATE_PRESETS } from "@/lib/security/rateLimit";
-import { hasAnyPermission, type Permission } from "@/lib/permissions";
+import { canUploadStudyMaterials, hasAnyPermission, type Permission } from "@/lib/permissions";
 import type { UserRole } from "@/types";
 
 /**
@@ -62,8 +62,11 @@ export async function POST(request: Request) {
   if (!isStorageBucket(bucket)) {
     return NextResponse.json({ error: "Invalid bucket" }, { status: 400 });
   }
+  if (bucket === "study-materials" && !canUploadStudyMaterials(user.role as UserRole)) {
+    return NextResponse.json({ error: "Only teachers can upload study materials" }, { status: 403 });
+  }
   const required = STAFF_BUCKETS[bucket];
-  if (required && !hasAnyPermission(user.role as UserRole, required)) {
+  if (required && bucket !== "study-materials" && !hasAnyPermission(user.role as UserRole, required)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
