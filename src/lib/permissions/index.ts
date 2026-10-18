@@ -272,7 +272,6 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "blogs.create",
     "blogs.edit",
     "blogs.publish",
-    "study.upload",
   ],
   moderator: [
     ...MEMBER,
@@ -342,6 +341,11 @@ export function requireAllPermissions(role: UserRole, permissions: Permission[])
 /* ------------------------------------------------------------------ */
 /* Role predicates                                                     */
 /* ------------------------------------------------------------------ */
+
+/** Only accounts explicitly assigned the teacher role may upload study files. Admin and moderation roles may manage library records but cannot publish files as teachers. */
+export function canUploadStudyMaterials(role: UserRole): boolean {
+  return role === "teacher";
+}
 
 /** Roles that may perform moderation work (server-side gate helper). */
 export function isModerationRole(role: UserRole): boolean {
