@@ -88,15 +88,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const { token, expiresAt } = await createSession(
-      db,
-      created.userId,
-      request.headers.get("user-agent") ?? undefined
-    );
+    let session: { token: string; expiresAt: Date };
+    try {
+      session = await createSession(db, created.userId, request.headers.get("user-agent") ?? undefined);
+    } catch {
+      return NextResponse.json(
+        { error: { _form: ["Your account was created, but automatic sign-in is temporarily unavailable. Please sign in with your new credentials."] } },
+        { status: 503 }
+      );
+    }
     const store = await cookies();
-    store.set(SESSION_COOKIE, token, {
+    store.set(SESSION_COOKIE, session.token, {
       ...sessionCookieOptions(),
-      expires: expiresAt,
+      expires: session.expiresAt,
     });
 
     return NextResponse.json({ success: true });
