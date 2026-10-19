@@ -274,3 +274,53 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   .dyne-app-shell * { scroll-behavior: auto !important; }
   .dyne-app-shell .dyne-card-hover:hover { transform: none; }
 }
+
+
+/* Final cross-platform polish: bring older feature screens into the same
+   visual language without flattening their distinct information architecture. */
+.dyne-main {
+  color: var(--foreground);
+  scrollbar-gutter: stable;
+}
+.dyne-main > * {
+  animation: dyne-fade 180ms ease both;
+}
+.dyne-main :is(h1, h2, h3) {
+  letter-spacing: -.025em;
+  text-wrap: pretty;
+}
+.dyne-main h1 { font-size: clamp(1.55rem, 1.25rem + 1.15vw, 2rem); font-weight: 800; line-height: 1.14; }
+.dyne-main h2 { font-weight: 750; line-height: 1.25; }
+.dyne-main :is(p, li) { text-wrap: pretty; }
+.dyne-main :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea, select) {
+  background-color: var(--card);
+  color: var(--foreground);
+  border-color: var(--input);
+  box-shadow: 0 1px 2px rgb(15 23 42 / .025);
+}
+.dyne-main :is(input, textarea, select)::placeholder { color: var(--muted-foreground); opacity: .82; }
+.dyne-main :is(input, textarea, select):focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+  outline: none;
+}
+.dyne-main :is(table) { border-collapse: separate; border-spacing: 0; }
+.dyne-main :is(th) { color: var(--muted-foreground); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.dyne-main :is(tr:hover td) { background-color: color-mix(in srgb, var(--accent) 3%, transparent); }
+.dyne-app-shell :is(button, [role="button"]) { font-weight: 550; }
+.dyne-app-shell :is(button:not(:disabled), [role="button"]) { cursor: pointer; }
+.dyne-app-shell :is(button, a, input, textarea, select) { touch-action: manipulation; }
+.dyne-app-shell .dyne-nav-item { min-height: 44px; }
+.dyne-app-shell .dyne-topbar { backdrop-filter: blur(18px); }
+.dyne-app-shell :is(.rounded-lg.border, .rounded-xl.border, .rounded-2xl.border) {
+  border-color: var(--border);
+}
+.dyne-app-shell :is(.shadow-sm, .shadow-md) { --tw-shadow-color: rgb(15 23 42 / .045); }
+.dyne-app-shell .bg-muted { color: var(--foreground); }
+.dyne-app-shell .text-muted-foreground { color: var(--muted-foreground); }
+@media (min-width: 768px) {
+  .dyne-main { scroll-padding-top: 1.25rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dyne-main > * { animation: none; }
+}
