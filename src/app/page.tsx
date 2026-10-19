@@ -5,6 +5,7 @@ import StorySections from "@/components/landing/StorySections";
 import EcosystemSections from "@/components/landing/EcosystemSections";
 import WatchCta from "@/components/landing/WatchCta";
 import LandingFooter from "@/components/landing/LandingFooter";
+import LandingMotion from "@/components/landing/LandingMotion";
 
 export const metadata: Metadata = {
   title: "Dyne — Your Campus, Your Community, Your Network",
@@ -39,12 +40,14 @@ export default function LandingPage() {
         Skip to content
       </a>
       <LandingNav />
-      <main id="main">
-        <Hero />
-        <StorySections />
-        <EcosystemSections />
-        <WatchCta />
-      </main>
+      <LandingMotion>
+        <main id="main">
+          <Hero />
+          <StorySections />
+          <EcosystemSections />
+          <WatchCta />
+        </main>
+      </LandingMotion>
       <LandingFooter />
     </div>
   );
