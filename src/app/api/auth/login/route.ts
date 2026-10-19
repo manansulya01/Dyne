@@ -97,11 +97,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const { token, expiresAt } = await createSession(
-    db,
-    user._id,
-    request.headers.get("user-agent") ?? undefined
-  );
+  let token: string;
+  let expiresAt: Date;
+  try {
+    const session = await createSession(db, user._id, request.headers.get("user-agent") ?? undefined);
+    token = session.token;
+    expiresAt = session.expiresAt;
+  } catch {
+    return NextResponse.json(
+      { error: { _form: ["Your account was verified, but a session could not be created. Please try again shortly."] } },
+      { status: 503 }
+    );
+  }
   const store = await cookies();
   store.set(SESSION_COOKIE, token, {
     ...sessionCookieOptions(),
