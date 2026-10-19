@@ -45,7 +45,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let db;
+  let db: Awaited<ReturnType<typeof getDb>>;
   try {
     db = await getDb();
     await ensureIndexes(db);
