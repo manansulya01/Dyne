@@ -364,3 +364,18 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 @media (min-width: 768px) {
   .dyne-main { padding-inline: clamp(.25rem, 1vw, 1rem); }
 }
+
+
+/* Match the compact mobile drawer to the same campus-night navigation rail. */
+.dyne-app-shell [role="dialog"] > aside {
+  background: linear-gradient(180deg, #07132f 0%, #0b1b3d 100%);
+  color: #edf4ff;
+  border-right: 1px solid rgb(153 180 224 / .16);
+}
+.dyne-app-shell [role="dialog"] > aside .border-b,
+.dyne-app-shell [role="dialog"] > aside .border-t { border-color: rgb(153 180 224 / .16); }
+.dyne-app-shell [role="dialog"] > aside .text-muted-foreground { color: #a7badb; }
+.dyne-app-shell [role="dialog"] > aside nav a { color: #b7c6df; }
+.dyne-app-shell [role="dialog"] > aside nav a:hover { background: rgb(255 255 255 / .065); color: #fff; }
+.dyne-app-shell [role="dialog"] > aside nav a[aria-current="page"] { background: rgb(70 145 255 / .17); color: #fff; box-shadow: inset 3px 0 0 #65b6ff; }
+.dyne-app-shell [role="dialog"] > aside button:hover { background: rgb(255 255 255 / .07); color: #fff; }
