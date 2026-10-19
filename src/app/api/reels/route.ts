@@ -5,7 +5,7 @@ import { ensureIndexes } from "@/lib/mongo/collections";
 import { createReel, listReelCategories, listReels } from "@/lib/db/reels";
 import { toReelJSON } from "@/lib/db/contracts";
 import { getSessionUser } from "@/lib/auth/session";
-import { withAnyPermission, withPermission } from "@/lib/security/authorize";
+import { guardRate, withAnyPermission, withPermission } from "@/lib/security/authorize";
 import { parseLimitParam } from "@/lib/utils";
 
 /**
@@ -87,6 +87,9 @@ export async function POST(request: Request) {
   const auth = await withPermission("reels.create");
   if (!auth.ok) return auth.response;
   const { db, user } = auth.ctx;
+
+  const limited = guardRate(request, user.id, "uploads");
+  if (limited) return limited;
 
   const body = await request.json().catch(() => null);
   const validated = reelCreateSchema.safeParse(body);
