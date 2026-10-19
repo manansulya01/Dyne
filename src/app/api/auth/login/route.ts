@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes } from "@/lib/mongo/collections";
 import { loginSchema } from "@/lib/validation";
-import { findUserByEmail } from "@/lib/db/users";
+import { findUserByLoginIdentifier } from "@/lib/db/users";
 import { verifyPassword } from "@/lib/auth/password";
 import { readFormData } from "@/lib/utils";
 import { rateLimit, clientKey, RATE_PRESETS } from "@/lib/security/rateLimit";
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     : null;
 
   const validated = loginSchema.safeParse({
-    email: formData.get("email"),
+    identifier: formData.get("identifier") ?? formData.get("email"),
     password: formData.get("password"),
   });
 
@@ -45,11 +45,19 @@ export async function POST(request: Request) {
     );
   }
 
-  const db = await getDb();
-  await ensureIndexes(db);
+  let db;
+  try {
+    db = await getDb();
+    await ensureIndexes(db);
+  } catch {
+    return NextResponse.json(
+      { error: { _form: ["Sign-in is temporarily unavailable because the account database cannot be reached. Please try again shortly."] } },
+      { status: 503 }
+    );
+  }
 
-  // Same generic error for unknown email vs wrong password (no enumeration).
-  const user = await findUserByEmail(db, validated.data.email);
+  // Same generic error for unknown account vs wrong password (no enumeration).
+  const user = await findUserByLoginIdentifier(db, validated.data.identifier);
   const ok = user
     ? await verifyPassword(validated.data.password, user.passwordHash)
     : false;
