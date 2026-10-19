@@ -324,3 +324,43 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 @media (prefers-reduced-motion: reduce) {
   .dyne-main > * { animation: none; }
 }
+
+
+/* Application chrome: the deep-navy rail is the recognizable Dyne signature,
+   while content stays calm, bright and editorial like the staff portal. */
+.dyne-app-shell { min-height: 100svh; background: var(--background); }
+.dyne-sidebar {
+  background: linear-gradient(180deg, #07132f 0%, #0b1b3d 58%, #08152f 100%);
+  border-color: rgb(153 180 224 / .16);
+  color: #edf4ff;
+}
+.dyne-sidebar .dyne-brandbar { border-bottom: 1px solid rgb(153 180 224 / .13); }
+.dyne-sidebar .dyne-brandbar a > span:first-child,
+.dyne-app-shell .md\:hidden a > span:first-child { box-shadow: 0 5px 18px rgb(0 0 0 / .16); }
+.dyne-sidebar .dyne-brandbar a span span:first-child { color: #f7faff; letter-spacing: .035em; }
+.dyne-sidebar .dyne-brandbar a span span:last-child,
+.dyne-sidebar .text-muted-foreground { color: #a7badb; }
+.dyne-sidebar .dyne-sidebar-nav > div > p { color: #7892bc; letter-spacing: .16em; font-size: .65rem; }
+.dyne-sidebar .dyne-nav-item { color: #b7c6df; border: 1px solid transparent; }
+.dyne-sidebar .dyne-nav-item:hover { background: rgb(255 255 255 / .065); color: #fff; }
+.dyne-sidebar .dyne-nav-item[aria-current="page"] { color: #fff; background: rgb(70 145 255 / .17); border-color: rgb(113 170 255 / .18); box-shadow: inset 3px 0 0 #65b6ff; }
+.dyne-sidebar .dyne-nav-item[aria-current="page"] > span { background: #3b82f6; color: #fff; }
+.dyne-sidebar .dyne-nav-item[aria-current="page"] > span svg { color: #fff; }
+.dyne-sidebar button:hover { color: #fff; background: rgb(255 255 255 / .07); }
+.dyne-sidebar .border-t { border-color: rgb(153 180 224 / .16); }
+.dyne-sidebar [data-radix-dropdown-menu-trigger] { color: #edf4ff; }
+.dyne-topbar { box-shadow: 0 5px 24px rgb(18 38 73 / .035); }
+.dyne-topbar > div:first-child { min-height: 68px; }
+.dyne-main { background: var(--background); }
+.dyne-main > div:first-child { max-width: 1480px; }
+.dyne-main :is(.rounded-lg.border, .rounded-xl.border, .rounded-2xl.border) { transition: border-color 160ms ease, box-shadow 160ms ease; }
+.dyne-main :is(.rounded-lg.border, .rounded-xl.border, .rounded-2xl.border):hover { border-color: color-mix(in srgb, var(--accent) 20%, var(--border)); }
+.dyne-main :is(button, a[role="tab"]) { -webkit-tap-highlight-color: transparent; }
+.dyne-main :is(button:disabled) { cursor: not-allowed; }
+@media (max-width: 767px) {
+  .dyne-sidebar { display: none; }
+  .dyne-main { padding-top: .35rem; }
+}
+@media (min-width: 768px) {
+  .dyne-main { padding-inline: clamp(.25rem, 1vw, 1rem); }
+}
