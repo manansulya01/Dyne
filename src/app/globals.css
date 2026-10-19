@@ -183,3 +183,94 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* Product-wide art direction: institutional navy, cool paper and precise blue. */
+.dyne-app-shell {
+  background:
+    radial-gradient(ellipse at 78% -18%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 42%),
+    var(--background);
+}
+.dyne-sidebar {
+  width: 16.75rem;
+  background: linear-gradient(180deg, var(--card) 0%, color-mix(in srgb, var(--card) 96%, var(--accent)) 100%);
+  border-right-color: color-mix(in srgb, var(--border) 82%, var(--accent));
+}
+.dyne-brandbar {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  margin-bottom: .5rem;
+}
+.dyne-brandbar a > span:first-child,
+.dyne-app-shell header a[aria-label="Dyne home"] span:first-child {
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+.dyne-sidebar-nav > div > p,
+.dyne-sidebar-nav > div > div > p {
+  letter-spacing: .16em;
+  font-size: .64rem;
+  padding-left: .85rem;
+  padding-bottom: .55rem;
+  color: var(--muted-foreground);
+}
+.dyne-nav-item {
+  position: relative;
+  border: 1px solid transparent;
+  letter-spacing: -.01em;
+}
+.dyne-nav-item[aria-current="page"] {
+  background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 14%, var(--card)), color-mix(in srgb, var(--accent) 5%, var(--card)));
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border));
+  box-shadow: 0 3px 12px -10px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.dyne-nav-item[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 25%;
+  bottom: 25%;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+}
+.dyne-nav-item:not([aria-current="page"]):hover {
+  border-color: color-mix(in srgb, var(--border) 65%, transparent);
+}
+.dyne-topbar {
+  background: color-mix(in srgb, var(--background) 90%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--border) 82%, var(--accent));
+  box-shadow: 0 8px 20px -24px var(--foreground);
+}
+.dyne-main {
+  background:
+    radial-gradient(ellipse at 80% 0%, color-mix(in srgb, var(--accent) 3.5%, transparent), transparent 36%),
+    transparent;
+}
+.dyne-app-shell input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.dyne-app-shell textarea,
+.dyne-app-shell select {
+  border-radius: .8rem;
+}
+.dyne-app-shell button,
+.dyne-app-shell a {
+  -webkit-tap-highlight-color: transparent;
+}
+.dyne-app-shell :is(button, a, input, textarea, select) {
+  transition-timing-function: cubic-bezier(.2,.7,.2,1);
+}
+.dyne-app-shell :is(button, a):active {
+  transition-duration: 90ms;
+}
+.dyne-app-shell .dyne-card,
+.dyne-app-shell [class*="rounded-xl"][class*="border"] {
+  border-color: color-mix(in srgb, var(--border) 92%, var(--accent));
+}
+.dyne-app-shell .dyne-card-hover:hover {
+  transform: translateY(-2px);
+}
+@media (max-width: 767px) {
+  .dyne-topbar { box-shadow: 0 4px 18px -18px var(--foreground); }
+  .dyne-main { background: var(--background); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dyne-app-shell * { scroll-behavior: auto !important; }
+  .dyne-app-shell .dyne-card-hover:hover { transform: none; }
+}
