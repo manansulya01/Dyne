@@ -142,7 +142,20 @@ export default function StorySections() {
               className={`flex min-h-[280px] items-center justify-center rounded-3xl border border-white/10 bg-gradient-to-br from-white/[0.07] to-white/[0.02] p-10 ${i % 2 === 1 ? "lg:order-1" : ""}`}
               aria-hidden="true"
             >
-              <s.icon className={`h-24 w-24 ${s.accent}`} strokeWidth={1.25} />
+              <div className="landing-orbit-scene">
+                <span className="landing-orbit landing-orbit-one" />
+                <span className="landing-orbit landing-orbit-two" />
+                <span className="landing-orbit-node landing-node-one" />
+                <span className="landing-orbit-node landing-node-two" />
+                <span className="landing-orbit-node landing-node-three" />
+                <div className="landing-scene-core">
+                  <s.icon className={`h-20 w-20 ${s.accent}`} strokeWidth={1.2} />
+                </div>
+                <div className="landing-scene-label landing-label-top">{s.eyebrow}</div>
+                <div className="landing-scene-label landing-label-left">{s.points[0]}</div>
+                <div className="landing-scene-label landing-label-right">{s.points[1]}</div>
+                <div className="landing-scene-caption">{s.index} / CONNECTED</div>
+              </div>
             </div>
           </div>
         </section>
