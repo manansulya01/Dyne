@@ -431,3 +431,52 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
   #main section[id] > div > div:last-child::after { animation: none; }
   .landing-scroll-progress { display: none; }
 }
+
+
+/* The story panels are miniature connected worlds, not empty icon tiles. */
+.landing-orbit-scene {
+  position: relative; display: grid; width: 100%; min-height: 270px; place-items: center;
+  isolation: isolate; transform-style: preserve-3d;
+}
+.landing-scene-core {
+  z-index: 2; display: grid; width: 144px; height: 144px; place-items: center; border-radius: 36px;
+  border: 1px solid rgb(103 232 249 / .3);
+  background: radial-gradient(circle at 28% 18%, rgb(103 232 249 / .18), transparent 55%), linear-gradient(145deg, rgb(20 36 62 / .96), rgb(8 15 30 / .98));
+  box-shadow: 0 25px 55px -28px rgb(34 211 238 / .3), inset 0 1px 0 rgb(255 255 255 / .12);
+  transform: translateZ(34px); animation: landing-core-float 6s ease-in-out infinite;
+}
+.landing-orbit {
+  position: absolute; width: min(78%, 330px); aspect-ratio: 1; border: 1px solid rgb(103 232 249 / .14);
+  border-radius: 50%; transform: rotateX(66deg) rotateZ(-18deg); pointer-events: none;
+}
+.landing-orbit-one { animation: landing-orbit-turn 28s linear infinite; }
+.landing-orbit-two { width: min(61%, 255px); border-color: rgb(167 139 250 / .2); transform: rotateX(66deg) rotateZ(42deg); animation: landing-orbit-turn 35s linear infinite reverse; }
+.landing-orbit-node { position: absolute; z-index: 3; width: 10px; height: 10px; border-radius: 50%; background: #67e8f9; box-shadow: 0 0 0 6px rgb(103 232 249 / .08), 0 0 22px rgb(103 232 249 / .55); }
+.landing-node-one { top: 18%; left: 28%; animation: landing-node-drift 5.8s ease-in-out infinite; }
+.landing-node-two { right: 22%; top: 34%; background: #a78bfa; box-shadow: 0 0 0 6px rgb(167 139 250 / .08), 0 0 22px rgb(167 139 250 / .45); animation: landing-node-drift 6.6s ease-in-out -2s infinite; }
+.landing-node-three { bottom: 20%; left: 38%; background: #fbbf24; box-shadow: 0 0 0 6px rgb(251 191 36 / .08), 0 0 22px rgb(251 191 36 / .35); animation: landing-node-drift 7s ease-in-out -1s infinite; }
+.landing-scene-label {
+  position: absolute; z-index: 4; max-width: 43%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border: 1px solid rgb(148 163 184 / .18); border-radius: 999px; padding: 8px 12px;
+  background: rgb(7 17 35 / .82); color: #dbeafe; font-size: 10px; font-weight: 650; letter-spacing: .025em;
+  box-shadow: 0 12px 28px rgb(0 0 0 / .22); backdrop-filter: blur(12px);
+}
+.landing-label-top { top: 6%; left: 50%; color: #a5f3fc; transform: translateX(-50%); text-transform: uppercase; letter-spacing: .16em; }
+.landing-label-left { left: 0; top: 48%; animation: landing-label-drift 7s ease-in-out infinite; }
+.landing-label-right { right: 0; top: 63%; animation: landing-label-drift 7s ease-in-out -3s infinite; }
+.landing-scene-caption { position: absolute; bottom: 2%; left: 50%; transform: translateX(-50%); color: rgb(148 163 184 / .8); font-size: 9px; font-weight: 700; letter-spacing: .2em; white-space: nowrap; }
+@keyframes landing-core-float { 0%, 100% { transform: translate3d(0, 2px, 34px); } 50% { transform: translate3d(0, -7px, 34px); } }
+@keyframes landing-orbit-turn { from { rotate: 0deg; } to { rotate: 360deg; } }
+@keyframes landing-node-drift { 0%, 100% { translate: 0 0; opacity: .7; } 50% { translate: 0 -8px; opacity: 1; } }
+@keyframes landing-label-drift { 0%, 100% { translate: 0 0; } 50% { translate: 0 -4px; } }
+@media (max-width: 640px) {
+  .landing-orbit-scene { min-height: 235px; }
+  .landing-scene-core { width: 112px; height: 112px; border-radius: 30px; }
+  .landing-scene-core svg { width: 58px; height: 58px; }
+  .landing-scene-label { max-width: 44%; padding: 7px 9px; font-size: 9px; }
+  .landing-label-left { left: -1%; }
+  .landing-label-right { right: -1%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-scene-core, .landing-orbit, .landing-orbit-node, .landing-label-left, .landing-label-right { animation: none !important; }
+}
