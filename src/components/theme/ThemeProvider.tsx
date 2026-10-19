@@ -23,7 +23,7 @@ const STORAGE_KEY = "dyne-theme";
 
 const DEFAULTS: ThemeState = {
   mode: "system",
-  accent: "campus",
+  accent: "campus-blue",
   density: "comfortable",
   fontScale: "medium",
   motion: "full",
@@ -88,24 +88,16 @@ const Ctx = createContext<{ theme: ThemeState; update: (p: Partial<ThemeState>) 
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  // Hydration-safe: SSR and the first client render both use DEFAULTS, so
-  // markup is deterministic. The persisted theme is synced in a mount effect
-  // below (after hydration), and the pre-paint inline script in the root
-  // layout has already set the matching DOM attributes — so there is no
-  // visible flash when state catches up.
   const [theme, setTheme] = useState<ThemeState>(DEFAULTS);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    // Initial persisted-theme sync only.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme(load());
     setHydrated(true);
   }, []);
 
   useEffect(() => {
-    // Skip the first run: the inline pre-paint script already applied the
-    // persisted theme to the DOM. Writing DEFAULTS here would flash.
     if (hydrated) apply(theme);
   }, [theme, hydrated]);
 
