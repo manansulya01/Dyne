@@ -480,3 +480,75 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 @media (prefers-reduced-motion: reduce) {
   .landing-scene-core, .landing-orbit, .landing-orbit-node, .landing-label-left, .landing-label-right { animation: none !important; }
 }
+
+
+/* --------------------------------------------------------------------------
+   Dyne UI refinement — tighter rhythm, quieter surfaces, fewer template cues.
+   Keep these rules presentation-only so existing page behaviour is unchanged.
+   -------------------------------------------------------------------------- */
+.dyne-main {
+  background:
+    radial-gradient(ellipse at 85% 0%, color-mix(in srgb, var(--accent) 3.5%, transparent), transparent 36rem),
+    var(--background);
+  scrollbar-gutter: stable;
+}
+.dyne-main :where(h1, h2, h3) {
+  text-wrap: balance;
+  letter-spacing: -0.035em;
+}
+.dyne-main :where(h1) {
+  font-size: clamp(1.55rem, 1.25rem + 0.7vw, 2rem);
+  line-height: 1.12;
+}
+.dyne-main :where(h2) {
+  font-size: clamp(1.1rem, 1rem + 0.35vw, 1.35rem);
+  line-height: 1.25;
+}
+.dyne-main :where(p) {
+  text-wrap: pretty;
+}
+.dyne-main :where(input, textarea, select) {
+  min-width: 0;
+}
+.dyne-main :where(button, a, input, textarea, select) {
+  -webkit-tap-highlight-color: transparent;
+}
+.dyne-main :where(a, button):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.dyne-main :where(.rounded-xl, .rounded-2xl) {
+  scroll-margin-block: 1rem;
+}
+.dyne-main :where(.text-muted-foreground) {
+  line-height: 1.55;
+}
+.dyne-main :where(.border-border) {
+  border-color: color-mix(in srgb, var(--border) 88%, transparent);
+}
+.dyne-main :where(.shadow-sm) {
+  --tw-shadow: 0 1px 2px rgb(15 23 42 / .025), 0 8px 22px -18px rgb(15 23 42 / .18);
+  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+}
+.dyne-sidebar {
+  background: color-mix(in srgb, var(--card) 97%, var(--background));
+}
+.dyne-brandbar {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+}
+.dyne-nav-item[aria-current="page"] {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+@media (max-width: 767px) {
+  .dyne-main {
+    scrollbar-gutter: auto;
+  }
+  .dyne-main :where(h1) {
+    font-size: clamp(1.45rem, 5vw, 1.8rem);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dyne-main * {
+    scroll-behavior: auto !important;
+  }
+}
