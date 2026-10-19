@@ -27,7 +27,7 @@ export function LoginForm() {
 
     try {
       const formData = new FormData();
-      formData.append("email", data.email);
+      formData.append("identifier", data.identifier);
       formData.append("password", data.password);
 
       const response = await fetch("/api/auth/login", {
@@ -71,19 +71,20 @@ export function LoginForm() {
             </div>
           )}
           <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="identifier">Email or account ID</Label>
             <Input
-              id="email"
-              type="email"
-              placeholder="you@mva.edu"
-              {...register("email")}
+              id="identifier"
+              type="text"
+              autoComplete="username"
+              placeholder="you@mva.edu or admin0"
+              {...register("identifier")}
               disabled={isLoading}
-              aria-invalid={!!errors.email}
-              aria-describedby={errors.email ? "email-error" : undefined}
+              aria-invalid={!!errors.identifier}
+              aria-describedby={errors.identifier ? "identifier-error" : undefined}
             />
-            {errors.email && (
-              <p id="email-error" className="text-sm text-red-500" role="alert">
-                {errors.email.message}
+            {errors.identifier && (
+              <p id="identifier-error" className="text-sm text-red-500" role="alert">
+                {errors.identifier.message}
               </p>
             )}
           </div>
