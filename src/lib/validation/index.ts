@@ -15,8 +15,10 @@ const boundedDateTime = z.string().datetime({ offset: true }).refine(
 );
 
 export const loginSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  identifier: z.string().trim().min(3, "Enter your email or account ID").max(254, "Account ID is too long"),
+  // Login validates that a password was supplied, not its current policy length:
+  // legacy and bootstrap credentials must be able to sign in and rotate afterward.
+  password: z.string().min(1, "Enter your password").max(128, "Password is too long"),
 });
 
 export const signupSchema = z
