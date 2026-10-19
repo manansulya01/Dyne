@@ -77,6 +77,16 @@ export async function findUserByEmail(db: Db, email: string) {
   return col<UserDoc>(db, "users").findOne({ email: normalizeEmail(email) } as never);
 }
 
+/** Resolve sign-in by email or a provisioned account ID/username. */
+export async function findUserByLoginIdentifier(db: Db, identifier: string) {
+  const value = identifier.trim();
+  if (value.includes("@")) return findUserByEmail(db, value);
+  const users = col<UserDoc>(db, "users");
+  const exact = await users.findOne({ username: value } as never);
+  if (exact) return exact;
+  return users.findOne({ username: value.toLowerCase() } as never);
+}
+
 export async function findUserById(db: Db, id: string | ObjectId) {
   return col<UserDoc>(db, "users").findOne({ _id: toObjectId(id) } as never);
 }
