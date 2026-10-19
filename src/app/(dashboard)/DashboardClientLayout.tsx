@@ -180,16 +180,16 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
   };
 
   return (
-    <div className="flex h-svh bg-background text-foreground">
+    <div className="dyne-app-shell flex h-svh bg-background text-foreground">
       {/* Desktop / iPad sidebar */}
       <aside
         aria-label="Primary"
         className={cn(
-          "sticky top-0 hidden h-svh shrink-0 flex-col border-r border-border bg-card transition-[width] duration-200 md:flex",
+          "dyne-sidebar sticky top-0 hidden h-svh shrink-0 flex-col border-r border-border bg-card transition-[width] duration-200 md:flex",
           collapsed ? "w-[76px]" : "w-64"
         )}
       >
-        <div className="flex h-16 items-center gap-2 px-4">
+        <div className="dyne-brandbar flex h-[76px] items-center gap-2 px-4">
           <Link href="/feed" className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2.5" aria-label="Dyne home">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-lg font-extrabold text-primary-foreground" aria-hidden="true">
               D
@@ -208,7 +208,7 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
           )}
         </div>
 
-        <nav className="dyne-scroll flex-1 space-y-4 overflow-y-auto px-3 py-3" aria-label="Main navigation">
+        <nav className="dyne-scroll dyne-sidebar-nav flex-1 space-y-5 overflow-y-auto px-3 py-4" aria-label="Main navigation">
           {navGroups.map((group) => (
             <div key={group.label}>
               {!collapsed && (
@@ -224,7 +224,7 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
                       aria-current={active ? "page" : undefined}
                       title={collapsed ? item.name : undefined}
                       className={cn(
-                        "group flex min-h-[44px] items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors",
+                        "dyne-nav-item group flex min-h-[46px] items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors",
                         collapsed && "justify-center px-0",
                         active ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
                       )}
@@ -296,7 +296,7 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
                           onClick={() => setMobileOpen(false)}
                           aria-current={active ? "page" : undefined}
                           className={cn(
-                            "flex min-h-[48px] items-center gap-3 rounded-xl px-3 text-[15px] font-medium",
+                            "dyne-nav-item flex min-h-[48px] items-center gap-3 rounded-xl px-3 text-[15px] font-medium",
                             active ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
                           )}
                         >
@@ -325,7 +325,7 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
           Skip to main content
         </a>
         <Header profile={profile} unread={unread} onMenu={() => setMobileOpen(true)} onPalette={() => setPaletteOpen(true)} />
-        <main id="dyne-main" tabIndex={-1} className="dyne-scroll min-h-0 flex-1 overflow-y-auto pb-24 md:pb-10">{children}</main>
+        <main id="dyne-main" tabIndex={-1} className="dyne-main dyne-scroll min-h-0 flex-1 overflow-y-auto pb-24 md:pb-10">{children}</main>
         {/* Mobile bottom navigation */}
         <nav aria-label="Mobile primary" className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
           <div className="grid" style={{ gridTemplateColumns: `repeat(${mobileNav.length || 5}, minmax(0, 1fr))` }}>
@@ -443,7 +443,7 @@ function Header({ profile, unread, onMenu, onPalette }: { profile: DashboardClie
       : Sun
     : Monitor;
   return (
-    <header className="sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur">
+    <header className="dyne-topbar sticky top-0 z-30 border-b border-border bg-background/90 backdrop-blur">
       <div className="flex h-16 items-center gap-2 px-3 sm:px-5">
         <button onClick={onMenu} aria-label="Open menu" className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl hover:bg-muted md:hidden">
           <Menu className="h-5 w-5" />
