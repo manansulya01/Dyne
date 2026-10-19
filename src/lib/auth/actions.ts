@@ -6,7 +6,7 @@ import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes } from "@/lib/mongo/collections";
 import { loginSchema, signupSchema, resetPasswordSchema, updatePasswordSchema } from "@/lib/validation";
-import { findUserByEmail } from "@/lib/db/users";
+import { findUserByEmail, findUserByLoginIdentifier } from "@/lib/db/users";
 import { createUser } from "@/lib/db/users";
 import { verifyPassword } from "@/lib/auth/password";
 import { getPasswordResetMailer, issuePasswordReset } from "@/lib/auth/passwordReset";
@@ -24,7 +24,7 @@ import { revalidatePath } from "next/cache";
 
 export async function loginAction(formData: FormData) {
   const validated = loginSchema.safeParse({
-    email: formData.get("email"),
+    identifier: formData.get("identifier") ?? formData.get("email"),
     password: formData.get("password"),
   });
 
@@ -35,7 +35,7 @@ export async function loginAction(formData: FormData) {
   const db = await getDb();
   await ensureIndexes(db);
 
-  const user = await findUserByEmail(db, validated.data.email);
+  const user = await findUserByLoginIdentifier(db, validated.data.identifier);
   const ok = user
     ? await verifyPassword(validated.data.password, user.passwordHash)
     : false;
