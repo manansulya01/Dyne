@@ -9,7 +9,7 @@ type StaffPortal = "teacher" | "admin";
 
 export function StaffLoginForm({ portal }: { portal: StaffPortal }) {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -21,7 +21,7 @@ export function StaffLoginForm({ portal }: { portal: StaffPortal }) {
     setLoading(true);
     try {
       const body = new FormData();
-      body.set("email", email);
+      body.set("identifier", identifier);
       body.set("password", password);
       body.set("portal", portal);
       const response = await fetch("/api/auth/login", { method: "POST", body });
@@ -74,17 +74,17 @@ export function StaffLoginForm({ portal }: { portal: StaffPortal }) {
 
             <form onSubmit={submit} className="mt-8 space-y-5">
               <div>
-                <label htmlFor="staff-email" className="mb-2 block text-sm font-medium text-slate-800">School email</label>
+                <label htmlFor="staff-identifier" className="mb-2 block text-sm font-medium text-slate-800">Account ID or school email</label>
                 <div className="relative">
                   <Mail aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input id="staff-email" name="email" type="email" autoComplete="username" required maxLength={254} value={email} onChange={(e) => setEmail(e.target.value)} disabled={loading} placeholder="name@school.edu" className="h-12 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-3 text-base outline-none transition placeholder:text-slate-400 focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:opacity-60" />
+                  <input id="staff-identifier" name="identifier" type="text" autoComplete="username" required maxLength={254} value={identifier} onChange={(e) => setIdentifier(e.target.value)} disabled={loading} placeholder={isTeacher ? "staff0 or name@school.edu" : "admin0 or name@school.edu"} className="h-12 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-3 text-base outline-none transition placeholder:text-slate-400 focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:opacity-60" />
                 </div>
               </div>
               <div>
                 <label htmlFor="staff-password" className="mb-2 block text-sm font-medium text-slate-800">Password</label>
                 <div className="relative">
                   <LockKeyhole aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input id="staff-password" name="password" type="password" autoComplete="current-password" required minLength={8} maxLength={128} value={password} onChange={(e) => setPassword(e.target.value)} disabled={loading} className="h-12 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-3 text-base outline-none transition focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:opacity-60" />
+                  <input id="staff-password" name="password" type="password" autoComplete="current-password" required maxLength={128} value={password} onChange={(e) => setPassword(e.target.value)} disabled={loading} className="h-12 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-3 text-base outline-none transition focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:opacity-60" />
                 </div>
               </div>
               {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
