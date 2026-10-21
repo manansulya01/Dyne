@@ -96,7 +96,19 @@ export async function POST(request: Request) {
 
   try {
     await getStorageDriver().put(bucket, key, bytes, checked.mime);
-  } catch {
+  } catch (err) {
+    // Keep the client response generic, but retain safe diagnostics in the
+    // server log so production storage failures can be distinguished from
+    // request validation and database failures. Never log credentials, file
+    // contents, cookies, or the original request.
+    const cause = err instanceof Error ? err : undefined;
+    const coded = err && typeof err === "object" ? err as { name?: unknown; $metadata?: { httpStatusCode?: unknown }; Code?: unknown; code?: unknown } : undefined;
+    console.error("[upload] storage write failed", {
+      bucket,
+      errorName: typeof coded?.name === "string" ? coded.name : cause?.name ?? "UnknownError",
+      storageCode: typeof coded?.Code === "string" ? coded.Code : typeof coded?.code === "string" ? coded.code : undefined,
+      statusCode: typeof coded?.$metadata?.httpStatusCode === "number" ? coded.$metadata.httpStatusCode : undefined,
+    });
     return NextResponse.json({ error: "Upload failed. Please try again." }, { status: 500 });
   }
 
