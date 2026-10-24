@@ -32,8 +32,25 @@ const STAFF_BUCKETS: Partial<Record<string, Permission[]>> = {
 };
 
 export async function POST(request: Request) {
-  const db = await getDb();
-  await ensureIndexes(db);
+  // Database/configuration failures happen before storage is reached. Keep
+  // them distinguishable in server logs instead of returning an opaque
+  // framework-generated 500 with no safe diagnostic context.
+  let db;
+  try {
+    db = await getDb();
+    await ensureIndexes(db);
+  } catch (err) {
+    const cause = err instanceof Error ? err : undefined;
+    const coded = err && typeof err === "object" ? err as { name?: unknown; code?: unknown } : undefined;
+    console.error("[upload] database initialization failed", {
+      errorName: typeof coded?.name === "string" ? coded.name : cause?.name ?? "UnknownError",
+      errorCode: typeof coded?.code === "string" || typeof coded?.code === "number" ? coded.code : undefined,
+    });
+    return NextResponse.json(
+      { error: "Upload service is temporarily unavailable. Please try again." },
+      { status: 503 }
+    );
+  }
 
   let user;
   try {
