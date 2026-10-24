@@ -54,6 +54,12 @@ export class R2StorageDriver implements StorageDriver {
 
   async put(bucket: StorageBucket, key: string, bytes: Uint8Array, mime: string) {
     assertSafeKey(key);
+    // Validate public URL configuration before writing bytes. Otherwise a
+    // missing R2_PUBLIC_BASE_URL can make publicUrl() throw after a successful
+    // PutObject, leaving an orphaned object while the API reports a 500.
+    if (publicBuckets.has(bucket) && !this.publicBase) {
+      throw new Error("R2_PUBLIC_BASE_URL is required before uploading to a public bucket");
+    }
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucketName(bucket),
