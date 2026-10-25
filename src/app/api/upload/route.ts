@@ -111,9 +111,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: sniffError }, { status: 400 });
   }
 
-  const storage = getStorageDriver();
+  let storage: ReturnType<typeof getStorageDriver>;
   let storedObject: { url: string };
   try {
+    // Driver construction can fail when production storage environment is
+    // missing or malformed; keep that failure inside the same safe boundary.
+    storage = getStorageDriver();
     storedObject = await storage.put(bucket, key, bytes, checked.mime);
   } catch (err) {
     // Keep the client response generic, but retain safe diagnostics in the
