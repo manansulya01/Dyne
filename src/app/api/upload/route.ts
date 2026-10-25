@@ -111,8 +111,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: sniffError }, { status: 400 });
   }
 
+  const storage = getStorageDriver();
+  let storedObject: { url: string };
   try {
-    await getStorageDriver().put(bucket, key, bytes, checked.mime);
+    storedObject = await storage.put(bucket, key, bytes, checked.mime);
   } catch (err) {
     // Keep the client response generic, but retain safe diagnostics in the
     // server log so production storage failures can be distinguished from
@@ -136,21 +138,46 @@ export async function POST(request: Request) {
     : checked.mime.startsWith("image/")
       ? "image"
       : "file";
-  const url = getStorageDriver().publicUrl(bucket, key);
-  const stored = await col<PendingMediaDoc>(db, "pendingMedia").insertOne({
-    uploaderId: toObjectId(user.id),
-    bucket,
-    key,
-    url,
-    mediaType,
-    thumbnailUrl: mediaType === "video" ? url : null,
-    mime: checked.mime,
-    originalName: file.name.slice(0, 200),
-    size: file.size,
-    createdAt: new Date(),
-  } as never);
+  const url = storedObject.url;
+  let storedId: string;
+  try {
+    const stored = await col<PendingMediaDoc>(db, "pendingMedia").insertOne({
+      uploaderId: toObjectId(user.id),
+      bucket,
+      key,
+      url,
+      mediaType,
+      thumbnailUrl: mediaType === "video" ? url : null,
+      mime: checked.mime,
+      originalName: file.name.slice(0, 200),
+      size: file.size,
+      createdAt: new Date(),
+    } as never);
+    storedId = stored.insertedId.toHexString();
+  } catch (err) {
+    const cause = err instanceof Error ? err : undefined;
+    console.error("[upload] metadata persistence failed", {
+      bucket,
+      errorName: cause?.name ?? "UnknownError",
+    });
+    // The object is not useful until its pending-media row exists. Attempt
+    // to roll it back so transient database errors do not leak stored files.
+    try {
+      await storage.delete(bucket, key);
+    } catch (cleanupErr) {
+      const cleanupCause = cleanupErr instanceof Error ? cleanupErr : undefined;
+      console.error("[upload] orphan cleanup failed", {
+        bucket,
+        errorName: cleanupCause?.name ?? "UnknownError",
+      });
+    }
+    return NextResponse.json(
+      { error: "Upload service is temporarily unavailable. Please try again." },
+      { status: 503 }
+    );
+  }
 
-  const hex = stored.insertedId.toHexString();
+  const hex = storedId;
   return NextResponse.json({
     media: {
       id: hex,
