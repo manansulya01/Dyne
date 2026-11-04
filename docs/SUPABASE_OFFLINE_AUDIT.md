@@ -61,6 +61,42 @@ paths, and role mutation paths against the actual deployed database. Verify
 that a student cannot self-assign teacher, staff, or admin roles and that
 moderators cannot promote themselves.
 
+### High: student profile data is globally readable
+
+Migration 01 creates a permissive SELECT policy on `profiles` with
+`USING (true)`. The table contains username, display name, avatar, bio,
+role, class grade, house, interests and last-active timestamp. Those fields
+are returned to every role allowed to query the table, including anonymous
+users if table grants permit it. This is a student campus network, so the
+policy needs an explicit public-profile field policy rather than treating all
+profile columns as public.
+
+**Required fix:** decide which profile fields are public and which are visible
+only to authenticated campus members or the owner. Use column-level grants,
+a restricted public profile view with `security_invoker = true`, or a
+server-side projection; keep private fields out of the public API. Test
+anonymous, unrelated-student and profile-owner access separately.
+
+### Medium: migration 14 has a nonstandard version width
+
+The file `2024010100014_add_post_type_to_posts.sql` uses a 13-digit
+version-like prefix, while migrations 01–13 use 14 digits. Do not rename it
+blindly: first inspect the actual Supabase migration ledger. If it has not
+been applied anywhere, normalize the filename to the project's timestamp
+convention before establishing the migration baseline; if it has been applied,
+preserve the recorded version and use a new additive migration.
+
+### Medium: extension installation must be verified on Cloud
+
+Migration 01 creates `uuid-ossp` and uses unqualified
+`uuid_generate_v4()` defaults. The previous Cloud attempt reported that
+`uuid_generate_v4()` did not exist. Supabase may install extensions into an
+`extensions` schema, which may not be on the migration role's search path.
+Inspect `pg_extension`, `pg_proc` and `SHOW search_path` on the intended
+project before retrying. Prefer Supabase's supported UUID generation
+(`gen_random_uuid()`) in a forward-only migration if compatibility permits;
+do not edit an already-applied migration.
+
 ### Medium: the schema is not yet a complete representation of the active app
 
 The domain mapping document lists more Mongo collections and behaviors than
