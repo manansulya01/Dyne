@@ -7,11 +7,7 @@ import { assertSafeKey } from "./types";
 
 /**
  * Persistent object storage backed by MongoDB GridFS.
- *
- * This keeps Dyne self-contained on its existing MongoDB Atlas deployment:
- * large media is stored in GridFS chunks, not embedded in application
- * documents. The existing /api/files route remains responsible for access
- * control before bytes are read.
+ * The existing /api/files route remains the authorization boundary.
  */
 export class MongoGridFSStorageDriver implements StorageDriver {
   readonly name = "mongodb-gridfs";
@@ -28,7 +24,9 @@ export class MongoGridFSStorageDriver implements StorageDriver {
     const upload = grid.openUploadStream(key, {
       metadata: { contentType: mime, storageBucket: bucket },
     });
-    await pipeline(Readable.from(Buffer.from(bytes)), upload);
+    // Wrap the Buffer in an array so Readable emits one Buffer chunk, not
+    // individual numeric bytes.
+    await pipeline(Readable.from([Buffer.from(bytes)]), upload);
     return { url: this.publicUrl(bucket, key) };
   }
 
