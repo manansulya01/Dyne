@@ -82,8 +82,8 @@ export async function GET(request: Request) {
     query.status = "approved";
     const grade = user.classGrade?.trim();
     query.$or = grade
-      ? [{ targetGrades: { $size: 0 } }, { targetGrades: grade }, { targetGrades: grade.split(/[- ]/)[0] }]
-      : [{ targetGrades: { $size: 0 } }];
+      ? [{ targetGrades: "*" }, { targetGrades: grade }, { targetGrades: grade.split(/[- ]/)[0] }]
+      : [{ targetGrades: "*" }];
   }
   if (before && Number.isFinite(before.getTime())) query.createdAt = { $lt: before };
 
