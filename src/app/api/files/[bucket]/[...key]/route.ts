@@ -63,8 +63,18 @@ export async function GET(_request: Request, { params }: Params) {
     if (rawBucket === "study-materials") {
       // Removed or rejected materials stay hidden even via direct file URLs.
       const material = await col(db, "studyMaterials").findOne({ key } as never);
-      if (!material || material.isRemoved || material.status === "rejected") {
+      if (!material || material.isRemoved || material.status !== "approved") {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      if (!["teacher", "staff", "moderator", "admin", "super_admin"].includes(user.role)) {
+        const profile = await col(db, "users").findOne({ _id: new (await import("mongodb")).ObjectId(user.id) } as never);
+        const enrolledGrade = typeof profile?.classGrade === "string" ? profile.classGrade.trim().toLowerCase() : "";
+        const materialGrade = material.classGrade.trim().toLowerCase();
+        const enrolledNumber = enrolledGrade.match(/\\d{1,2}/)?.[0];
+        const materialNumber = materialGrade.match(/\\d{1,2}/)?.[0];
+        if (!enrolledGrade || (enrolledGrade !== materialGrade && (!enrolledNumber || enrolledNumber !== materialNumber))) {
+          return NextResponse.json({ error: "Not found" }, { status: 404 });
+        }
       }
     }
     if (rawBucket === "watch-videos") {
