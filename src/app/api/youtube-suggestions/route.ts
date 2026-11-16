@@ -74,6 +74,7 @@ export async function GET(request: Request) {
   if (review) {
     if (!teacherRoles.has(user.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     query.status = "pending";
+    if (user.role === "teacher") query.suggestedBy = { $ne: toObjectId(user.id) };
   } else if (mine) {
     query.suggestedBy = toObjectId(user.id);
   } else {
