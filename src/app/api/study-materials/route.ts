@@ -8,7 +8,6 @@ import { parseLimitParam } from "@/lib/utils";
 import { guardRate, jsonError, withAnyPermission, withUser } from "@/lib/security/authorize";
 import { canUploadStudyMaterials } from "@/lib/permissions";
 import type { StudyMaterialType } from "@/lib/mongo/collections";
-import { toObjectId } from "@/lib/mongo/ids";
 
 /**
  * Study materials API.
@@ -78,8 +77,7 @@ export async function GET(request: NextRequest) {
   // for students so a modified request cannot expose another class's files.
   let effectiveClassGrade = classGrade;
   if (!["teacher", "staff", "moderator", "admin", "super_admin"].includes(user.role)) {
-    const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
-    effectiveClassGrade = typeof profile?.classGrade === "string" ? profile.classGrade.trim() : "__unassigned__";
+    effectiveClassGrade = user.classGrade?.trim() || "__unassigned__";
   }
   const items = await listStudyMaterials(db, {
     search,
