@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
-import { ensureIndexes, col } from "@/lib/mongo/collections";
+import { col } from "@/lib/mongo/collections";
 import { studyMaterialCreateSchema, STUDY_MATERIAL_TYPES } from "@/lib/validation";
 import { createStudyMaterial, listStudyMaterials } from "@/lib/db/studyMaterials";
 import { toStudyMaterialJSON } from "@/lib/db/contracts";
