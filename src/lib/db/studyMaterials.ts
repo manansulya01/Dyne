@@ -154,10 +154,9 @@ export async function listStudyMaterials(
     q.status = "approved";
   }
   if (opts.search?.trim()) {
-    const rx = { $regex: opts.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
     q.$text = { $search: opts.search.trim().slice(0, 100) };
   }
-  if (opts.subject) q.subject = { $regex: `^${opts.subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" };
+  if (opts.subject) q.subject = opts.subject.trim();
   if (opts.classGrade) q.classGrade = opts.classGrade.trim();
   if (opts.materialType) q.materialType = opts.materialType;
   if (opts.tag) q.tags = opts.tag.slice(0, 30);
