@@ -291,6 +291,7 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
             ))}
           </div>
         )}
+        {approvedPage.hasMore && <Button variant="outline" disabled={loadingMore !== null} onClick={() => void loadMore("approved")}>{loadingMore === "approved" ? "Loading…" : "Load more videos"}</Button>}
       </section>
     </main>
   );
