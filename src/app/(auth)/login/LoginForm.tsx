@@ -119,6 +119,7 @@ export function LoginForm() {
           <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">School staff</p>
           <div className="flex flex-wrap justify-center gap-x-5 gap-y-2 text-sm">
             <Link href="/teacher/login" className="font-medium text-primary hover:underline">Teacher portal</Link>
+            <Link href="/staff/login" className="font-medium text-primary hover:underline">Staff portal</Link>
             <Link href="/admin/login" className="font-medium text-primary hover:underline">Administrator portal</Link>
           </div>
         </div>
