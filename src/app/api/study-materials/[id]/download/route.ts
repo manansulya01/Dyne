@@ -47,7 +47,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     // Redirect to a short-lived R2 URL: large PDFs and videos bypass the
     // serverless function entirely, support HTTP Range, and do not consume
     // function memory or Mongo connections while bytes are transferred.
-    const safeName = row.fileName.replace(/[\"\\r\\n]/g, "_");
+    const safeName = row.fileName.replace(/["\r\n]/g, "_");
     const signedUrl = await storage.signedUrl(
       row.bucket as never,
       row.key,
@@ -66,7 +66,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   if (!file) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const safeName = row.fileName.replace(/["\r\n]/g, "_");
+    const safeName = row.fileName.replace(/["\r\n]/g, "_");
   return new NextResponse(file.bytes as unknown as BodyInit, {
     status: 200,
     headers: {
