@@ -21,6 +21,7 @@ import {
   clearedSessionCookieOptions,
 } from "@/lib/auth/session";
 import { revalidatePath } from "next/cache";
+import { getRoleHomePath } from "@/lib/auth/portal";
 
 export async function loginAction(formData: FormData) {
   const validated = loginSchema.safeParse({
@@ -56,7 +57,8 @@ export async function loginAction(formData: FormData) {
   store.set(SESSION_COOKIE, token, { ...sessionCookieOptions(), expires: expiresAt });
 
   revalidatePath("/", "layout");
-  redirect("/feed");
+  if (user.mustChangePassword) redirect("/update-password?reason=forced");
+  redirect(getRoleHomePath(user.role));
 }
 
 export async function signupAction(formData: FormData) {

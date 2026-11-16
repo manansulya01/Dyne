@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * One-time provisioning for initial Dyne staff accounts.
+ * One-time provisioning for Dyne administrator, teacher, and staff accounts.
  *
- * Configure MONGODB_URI/MONGODB_DB and ADMIN_BOOTSTRAP_PASSWORD in the shell
- * or deployment environment before running. Never put real passwords in Git.
+ * Configure MONGODB_URI/MONGODB_DB and the relevant *_BOOTSTRAP_PASSWORD
+ * variables in a trusted shell or secret store. Never commit real passwords.
  * Every provisioned account must change its password after first sign-in.
  *
  * npm run bootstrap:admin
@@ -30,31 +30,43 @@ const accounts = [
   },
   {
     enabled: Boolean(env("TEACHER_BOOTSTRAP_PASSWORD")),
-    username: env("TEACHER_BOOTSTRAP_USERNAME", "staff0").toLowerCase(),
-    email: env("TEACHER_BOOTSTRAP_EMAIL", "staff0@dyne.local").toLowerCase(),
+    username: env("TEACHER_BOOTSTRAP_USERNAME", "teacher0").toLowerCase(),
+    email: env("TEACHER_BOOTSTRAP_EMAIL", "teacher0@dyne.local").toLowerCase(),
     password: env("TEACHER_BOOTSTRAP_PASSWORD"),
-    displayName: env("TEACHER_BOOTSTRAP_DISPLAY_NAME", "Dyne Staff"),
+    displayName: env("TEACHER_BOOTSTRAP_DISPLAY_NAME", "Dyne Teacher"),
     role: "teacher",
+  },
+  {
+    enabled: Boolean(env("STAFF_BOOTSTRAP_PASSWORD")),
+    username: env("STAFF_BOOTSTRAP_USERNAME", "staff0").toLowerCase(),
+    email: env("STAFF_BOOTSTRAP_EMAIL", "staff0@dyne.local").toLowerCase(),
+    password: env("STAFF_BOOTSTRAP_PASSWORD"),
+    displayName: env("STAFF_BOOTSTRAP_DISPLAY_NAME", "Dyne Staff"),
+    role: "staff",
   },
 ];
 
-for (const account of accounts.filter((item) => item.enabled)) {
+const enabled = accounts.filter((account) => account.enabled);
+for (const account of enabled) {
   if (!/^[a-z0-9_]{3,30}$/.test(account.username)) {
     console.error(`Invalid username configured for role ${account.role}.`);
     process.exit(2);
   }
-  if (account.password.length < 7 || account.password.length > 128) {
-    console.error(`Bootstrap password for ${account.username} must be 7–128 characters; use a stronger password and rotate it after first sign-in.`);
+  if (account.password.length < 12 || account.password.length > 128) {
+    console.error(`Bootstrap password for ${account.username} must be 12–128 characters.`);
     process.exit(2);
   }
 }
-if (!accounts.some((item) => item.enabled)) {
-  console.error("Set ADMIN_BOOTSTRAP_PASSWORD and/or TEACHER_BOOTSTRAP_PASSWORD before running this command.");
+if (enabled.length === 0) {
+  console.error("Set at least one of ADMIN_BOOTSTRAP_PASSWORD, TEACHER_BOOTSTRAP_PASSWORD, or STAFF_BOOTSTRAP_PASSWORD.");
   process.exit(2);
 }
-if (accounts.some((a) => a.enabled) && accounts.filter((a) => a.enabled).some((a) => accounts.filter((b) => b.enabled && b.username === a.username).length > 1)) {
-  console.error("Bootstrap usernames must be unique.");
-  process.exit(2);
+for (const field of ["username", "email"]) {
+  const values = enabled.map((account) => account[field]);
+  if (new Set(values).size !== values.length) {
+    console.error(`Bootstrap ${field}s must be unique.`);
+    process.exit(2);
+  }
 }
 
 const client = new MongoClient(uri, {
@@ -66,20 +78,20 @@ try {
   const db = client.db(dbName);
   await db.command({ ping: 1 });
   const users = db.collection("users");
-  for (const account of accounts.filter((item) => item.enabled)) {
-    const hash = await bcrypt.hash(account.password, 12);
+  for (const account of enabled) {
     const matches = await users.find({
       $or: [{ username: account.username }, { email: account.email }],
     }).limit(2).toArray();
     if (matches.length > 1) {
       throw new Error(`Username/email for ${account.username} belong to different existing accounts; resolve the conflict manually first.`);
     }
+
     const now = new Date();
     const profile = {
       username: account.username,
       email: account.email,
       displayName: account.displayName,
-      passwordHash: hash,
+      passwordHash: await bcrypt.hash(account.password, 12),
       role: account.role,
       mustChangePassword: true,
       passwordUpdatedAt: now,

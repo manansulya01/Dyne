@@ -12,8 +12,9 @@ import {
   SESSION_COOKIE,
   sessionCookieOptions,
 } from "@/lib/auth/session";
+import { canAccessStaffPortal, getRoleHomePath, type StaffPortal } from "@/lib/auth/portal";
 
-type StaffPortal = "teacher" | "admin";
+const STAFF_PORTALS: readonly StaffPortal[] = ["teacher", "staff", "admin"];
 
 export async function POST(request: Request) {
   const rl = rateLimit(`login:${clientKey(request)}`, RATE_PRESETS.login.limit, RATE_PRESETS.login.windowMs);
@@ -26,10 +27,14 @@ export async function POST(request: Request) {
   }
 
   const portalValue = formData.get("portal");
-  if (portalValue !== null && portalValue !== "" && portalValue !== "teacher" && portalValue !== "admin") {
+  if (
+    portalValue !== null &&
+    portalValue !== "" &&
+    (typeof portalValue !== "string" || !STAFF_PORTALS.includes(portalValue as StaffPortal))
+  ) {
     return NextResponse.json({ error: "Invalid sign-in portal." }, { status: 400 });
   }
-  const portal = portalValue === "teacher" || portalValue === "admin"
+  const portal = typeof portalValue === "string" && portalValue !== ""
     ? portalValue as StaffPortal
     : null;
 
@@ -82,17 +87,12 @@ export async function POST(request: Request) {
     );
   }
 
-  // Staff portals are only entry points, never privilege grants. Check the
-  // canonical role in MongoDB before creating a session or setting a cookie.
-  if (portal === "teacher" && user.role !== "teacher") {
+  // The database role is authoritative. A portal choice can never elevate
+  // a student, staff member, teacher, or administrator.
+  if (portal && !canAccessStaffPortal(user.role, portal)) {
+    const portalName = portal === "admin" ? "administration" : portal;
     return NextResponse.json(
-      { error: { _form: ["This account is not authorized for the teacher portal."] } },
-      { status: 403 }
-    );
-  }
-  if (portal === "admin" && user.role !== "admin" && user.role !== "super_admin") {
-    return NextResponse.json(
-      { error: { _form: ["This account is not authorized for the administration portal."] } },
+      { error: { _form: [`This account is not authorized for the ${portalName} portal.`] } },
       { status: 403 }
     );
   }
@@ -115,7 +115,7 @@ export async function POST(request: Request) {
     expires: expiresAt,
   });
 
-  // Flagged accounts must rotate their password before accessing any portal.
+  // Flagged accounts may only reach the password rotation screen.
   if (user.mustChangePassword) {
     return NextResponse.json({
       success: true,
@@ -126,6 +126,6 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     success: true,
-    redirectTo: portal === "admin" ? "/admin" : portal === "teacher" ? "/feed" : "/feed",
+    redirectTo: portal ? getRoleHomePath(user.role) : getRoleHomePath(user.role),
   });
 }

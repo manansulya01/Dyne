@@ -6,8 +6,9 @@ on:
       - main
       - feature/secure-campus-media-moderation
       - migration/supabase-backend
+      - fix/staff-role-auth
   pull_request:
-    branches: [main]
+    branches: [main, feature/mongodb-gridfs-storage]
 
 permissions:
   contents: read
