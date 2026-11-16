@@ -80,11 +80,13 @@ export async function GET(request: Request) {
     query.suggestedBy = toObjectId(user.id);
   } else {
     query.status = "approved";
-    const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
-    const grade = typeof profile?.classGrade === "string" ? profile.classGrade.trim() : "";
-    query.$or = grade
-      ? [{ targetGrades: "*" }, { targetGrades: grade }, { targetGrades: grade.split(/[- ]/)[0] }]
-      : [{ targetGrades: "*" }];
+    if (user.role === "student") {
+      const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
+      const grade = typeof profile?.classGrade === "string" ? profile.classGrade.trim() : "";
+      query.$or = grade
+        ? [{ targetGrades: "*" }, { targetGrades: grade }, { targetGrades: grade.split(/[- ]/)[0] }]
+        : [{ targetGrades: "*" }];
+    }
   }
   if (before && Number.isFinite(before.getTime())) query.createdAt = { $lt: before };
 
