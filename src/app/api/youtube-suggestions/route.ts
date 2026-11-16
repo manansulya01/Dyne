@@ -122,7 +122,7 @@ export async function POST(request: Request) {
   if (!auth.ok) return auth.response;
   const { db, user } = auth.ctx;
   if (user.role !== "student") return NextResponse.json({ error: "Only students can submit video suggestions." }, { status: 403 });
-  const limited = guardRate(request as never, user.id, "uploads");
+  const limited = guardRate(request, user.id, "uploads");
   if (limited) return limited;
   const body = await request.json().catch(() => null);
   const parsed = createSchema.safeParse(body);
