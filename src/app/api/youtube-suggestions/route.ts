@@ -80,7 +80,8 @@ export async function GET(request: Request) {
     query.suggestedBy = toObjectId(user.id);
   } else {
     query.status = "approved";
-    const grade = user.classGrade?.trim();
+    const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
+    const grade = typeof profile?.classGrade === "string" ? profile.classGrade.trim() : "";
     query.$or = grade
       ? [{ targetGrades: "*" }, { targetGrades: grade }, { targetGrades: grade.split(/[- ]/)[0] }]
       : [{ targetGrades: "*" }];
