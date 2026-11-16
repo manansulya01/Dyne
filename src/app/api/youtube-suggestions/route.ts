@@ -124,7 +124,7 @@ export async function GET(request: Request) {
       status: row.status,
       targetGrades: row.targetGrades,
       reviewReason: row.reviewReason,
-      note: row.suggestionNote,
+      note: mine || review ? row.suggestionNote : null,
       createdAt: row.createdAt.toISOString(),
     })),
     hasMore,
