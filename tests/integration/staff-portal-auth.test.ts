@@ -23,8 +23,8 @@ describe("staff portal authentication policy", () => {
     expect(getRoleHomePath("admin")).toBe("/admin");
     expect(getRoleHomePath("teacher")).toBe("/teacher");
     expect(getRoleHomePath("staff")).toBe("/dashboard");
-    expect(getRoleHomePath("student")).toBe("/dashboard");
-    expect(getRoleHomePath("club")).toBe("/dashboard");
-    expect(getRoleHomePath("moderator")).toBe("/dashboard");
+    expect(getRoleHomePath("student")).toBe("/feed");
+    expect(getRoleHomePath("club")).toBe("/feed");
+    expect(getRoleHomePath("moderator")).toBe("/feed");
   });
 });
