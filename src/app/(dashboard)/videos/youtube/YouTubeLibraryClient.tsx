@@ -26,6 +26,7 @@ const staffRoles = new Set(["teacher", "admin", "super_admin"]);
 export function YouTubeLibraryClient({ role }: { role: string }) {
   const isStudent = role === "student";
   const canReview = staffRoles.has(role);
+  const canSuggest = isStudent || canReview;
   const [approved, setApproved] = useState<Suggestion[]>([]);
   const [mine, setMine] = useState<Suggestion[]>([]);
   const [queue, setQueue] = useState<Suggestion[]>([]);
@@ -43,7 +44,7 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
     try {
       const requests = [
         fetch("/api/youtube-suggestions?limit=24"),
-        ...(isStudent ? [fetch("/api/youtube-suggestions?mine=true&limit=30")] : []),
+        ...(canSuggest ? [fetch("/api/youtube-suggestions?mine=true&limit=30")] : []),
         ...(canReview ? [fetch("/api/youtube-suggestions?review=true&limit=50")] : []),
       ];
       const responses = await Promise.all(requests);
@@ -54,12 +55,12 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
       }));
       setApproved(payloads[0].suggestions ?? []);
       let index = 1;
-      if (isStudent) setMine(payloads[index++].suggestions ?? []);
+      if (canSuggest) setMine(payloads[index++].suggestions ?? []);
       if (canReview) setQueue(payloads[index].suggestions ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load YouTube library");
     }
-  }, [isStudent, canReview]);
+  }, [canSuggest, canReview]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -123,11 +124,11 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
       {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
       {message && <p role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm">{message}</p>}
 
-      {isStudent && (
+      {canSuggest && (
         <section className="space-y-3 rounded-2xl border border-border p-4 sm:p-5">
           <div>
-            <h2 className="font-semibold">Suggest a video</h2>
-            <p className="text-sm text-muted-foreground">Share a YouTube link. It stays private to the review team until approved.</p>
+            <h2 className="font-semibold">{isStudent ? "Suggest a video" : "Submit a YouTube video"}</h2>
+            <p className="text-sm text-muted-foreground">Share a YouTube link. It stays private to the review team until approved for its intended grades.</p>
           </div>
           <form onSubmit={submitSuggestion} className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
             <Input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Paste YouTube video URL" type="url" required maxLength={2048} className="min-h-[46px]" />
@@ -191,11 +192,11 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
         </section>
       )}
 
-      {isStudent && (
+      {canSuggest && (
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold">My suggestions</h2>
+          <h2 className="text-lg font-semibold">My submissions</h2>
           {mine.length === 0 ? (
-            <p className="text-sm text-muted-foreground">You have not suggested any videos yet.</p>
+            <p className="text-sm text-muted-foreground">You have not submitted any videos yet.</p>
           ) : (
             <div className="grid gap-2 sm:grid-cols-2">
               {mine.map((item) => (
