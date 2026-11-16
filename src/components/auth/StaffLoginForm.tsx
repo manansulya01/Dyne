@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ShieldCheck, GraduationCap, LockKeyhole, Mail, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
-type StaffPortal = "teacher" | "admin";
+type StaffPortal = "teacher" | "staff" | "admin";
 
 export function StaffLoginForm({ portal }: { portal: StaffPortal }) {
   const router = useRouter();
@@ -14,6 +14,9 @@ export function StaffLoginForm({ portal }: { portal: StaffPortal }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const isTeacher = portal === "teacher";
+  const isStaff = portal === "staff";
+  const portalTitle = isTeacher ? "Teacher" : isStaff ? "Staff" : "Administrator";
+  const destination = isTeacher ? "/teacher" : isStaff ? "/dashboard" : "/admin";
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -34,7 +37,7 @@ export function StaffLoginForm({ portal }: { portal: StaffPortal }) {
         return;
       }
       router.refresh();
-      router.replace(result.redirectTo ?? (isTeacher ? "/feed" : "/admin"));
+      router.replace(result.redirectTo ?? destination);
     } catch {
       setError("A connection error occurred. Please try again.");
     } finally {
@@ -53,8 +56,8 @@ export function StaffLoginForm({ portal }: { portal: StaffPortal }) {
           </div>
           <div className="relative max-w-xl pb-12">
             <p className="mb-5 text-xs font-semibold uppercase tracking-[0.24em] text-blue-300">Staff access portal</p>
-            <h1 className="text-4xl font-semibold leading-tight tracking-tight xl:text-5xl">{isTeacher ? "Teaching starts with a connected campus." : "A safer, stronger campus starts here."}</h1>
-            <p className="mt-6 max-w-lg text-base leading-7 text-slate-300">{isTeacher ? "Access academic tools, share approved learning resources, and stay connected with your school community." : "Manage campus operations, review reports, and maintain a respectful, secure community."}</p>
+            <h1 className="text-4xl font-semibold leading-tight tracking-tight xl:text-5xl">{isTeacher ? "Teaching starts with a connected campus." : isStaff ? "Campus operations start with a connected team." : "A safer, stronger campus starts here."}</h1>
+            <p className="mt-6 max-w-lg text-base leading-7 text-slate-300">{isTeacher ? "Access academic tools, share approved learning resources, and stay connected with your school community." : isStaff ? "Access your assigned staff tools, support campus operations, and help maintain a safe school community." : "Manage campus operations, review reports, and maintain a respectful, secure community."}</p>
             <div className="mt-9 flex items-center gap-3 text-sm text-slate-300"><ShieldCheck className="h-5 w-5 text-blue-300" /> Protected access for authorized school personnel</div>
           </div>
           <p className="relative text-xs text-slate-500">DYNE · YOUR CAMPUS. YOUR COMMUNITY. YOUR NETWORK.</p>
@@ -68,16 +71,16 @@ export function StaffLoginForm({ portal }: { portal: StaffPortal }) {
             <div className="mb-8 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-950 text-white shadow-sm">
               {isTeacher ? <GraduationCap className="h-7 w-7" /> : <ShieldCheck className="h-7 w-7" />}
             </div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-800">{isTeacher ? "Faculty portal" : "Administration portal"}</p>
-            <h2 className="mt-2 text-3xl font-semibold tracking-tight">{isTeacher ? "Teacher sign in" : "Administrator sign in"}</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-600">{isTeacher ? "Use your registered school account to access teaching tools." : "Authorized administrators only. Your account permissions are verified securely."}</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-800">{isTeacher ? "Faculty portal" : isStaff ? "Staff portal" : "Administration portal"}</p>
+            <h2 className="mt-2 text-3xl font-semibold tracking-tight">{portalTitle} sign in</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600">{isTeacher ? "Use your registered school account to access teaching tools." : isStaff ? "Use your assigned staff account. Your access is limited to permissions granted by the school." : "Authorized administrators only. Your account permissions are verified securely."}</p>
 
             <form onSubmit={submit} className="mt-8 space-y-5">
               <div>
                 <label htmlFor="staff-identifier" className="mb-2 block text-sm font-medium text-slate-800">Account ID or school email</label>
                 <div className="relative">
                   <Mail aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input id="staff-identifier" name="identifier" type="text" autoComplete="username" required maxLength={254} value={identifier} onChange={(e) => setIdentifier(e.target.value)} disabled={loading} placeholder={isTeacher ? "staff0 or name@school.edu" : "admin0 or name@school.edu"} className="h-12 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-3 text-base outline-none transition placeholder:text-slate-400 focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:opacity-60" />
+                  <input id="staff-identifier" name="identifier" type="text" autoComplete="username" required maxLength={254} value={identifier} onChange={(e) => setIdentifier(e.target.value)} disabled={loading} placeholder={isTeacher ? "teacher0 or name@school.edu" : isStaff ? "staff0 or name@school.edu" : "admin0 or name@school.edu"} className="h-12 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-3 text-base outline-none transition placeholder:text-slate-400 focus:border-blue-700 focus:ring-4 focus:ring-blue-100 disabled:opacity-60" />
                 </div>
               </div>
               <div>
@@ -89,7 +92,7 @@ export function StaffLoginForm({ portal }: { portal: StaffPortal }) {
               </div>
               {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
               <button type="submit" disabled={loading} className="flex h-12 w-full items-center justify-center rounded-xl bg-blue-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900 focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
-                {loading ? "Verifying account…" : isTeacher ? "Sign in to teacher portal" : "Sign in to administration"}
+                {loading ? "Verifying account…" : `Sign in to ${portalTitle.toLowerCase()} portal`}
               </button>
             </form>
             <div className="mt-6 rounded-xl border border-slate-200 bg-white/80 p-4 text-xs leading-5 text-slate-600">
