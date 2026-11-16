@@ -81,7 +81,7 @@ export async function GET(request: Request) {
     if (user.role === "student") {
       const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
       const grade = typeof profile?.classGrade === "string" ? profile.classGrade.trim() : "";
-      const gradeNumber = grade.match(/\\d{1,2}/)?.[0];
+      const gradeNumber = grade.match(/\d{1,2}/)?.[0];
       query.$or = grade
         ? [
             { targetGrades: "*" },
@@ -135,7 +135,7 @@ export async function POST(request: Request) {
   if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
     return NextResponse.json({ error: "Enter a valid YouTube video URL." }, { status: 400 });
   }
-  let metadata;
+  let metadata: Awaited<ReturnType<typeof getYouTubeMetadata>>;
   try {
     metadata = await getYouTubeMetadata(videoId);
   } catch (error) {
@@ -155,9 +155,9 @@ export async function POST(request: Request) {
   if (existing) return NextResponse.json({ error: "This video has already been suggested or approved." }, { status: 409 });
 
   const now = new Date();
-  let inserted;
+  let insertedId: string;
   try {
-    inserted = await col<YouTubeSuggestionDoc>(db, "youtubeSuggestions").insertOne({
+    const inserted = await col<YouTubeSuggestionDoc>(db, "youtubeSuggestions").insertOne({
     videoId,
     url: `https://www.youtube.com/watch?v=${videoId}`,
     ...metadata,
@@ -172,11 +172,12 @@ export async function POST(request: Request) {
     createdAt: now,
     updatedAt: now,
     } as never);
+    insertedId = inserted.insertedId.toHexString();
   } catch (error) {
     if (error instanceof Error && /duplicate key/i.test(error.message)) {
       return NextResponse.json({ error: "This video has already been suggested." }, { status: 409 });
     }
     throw error;
   }
-  return NextResponse.json({ success: true, id: inserted.insertedId.toHexString(), status: "pending" }, { status: 201 });
+  return NextResponse.json({ success: true, id: insertedId, status: "pending" }, { status: 201 });
 }
