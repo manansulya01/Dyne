@@ -1327,9 +1327,10 @@ async function createAllIndexes(db: Db): Promise<void> {
   idx("feedback", { category: 1 });
 
   idx("studyMaterials", { subject: 1, classGrade: 1 });
-  idx("studyMaterials", { uploaderId: 1 });
-  idx("studyMaterials", { createdAt: -1 });
-  idx("studyMaterials", { status: 1 });
+  idx("studyMaterials", { uploaderId: 1, createdAt: -1 });
+  idx("studyMaterials", { status: 1, classGrade: 1, createdAt: -1, _id: -1 });
+  idx("studyMaterials", { status: 1, subject: 1, classGrade: 1, createdAt: -1, _id: -1 });
+  jobs.push(db.collection("studyMaterials").createIndex({ title: "text", description: "text", subject: "text", tags: "text" }));
 
   idx("savedStudyMaterials", { userId: 1, createdAt: -1 });
   idx("savedStudyMaterials", { userId: 1, materialId: 1 }, { unique: true });
