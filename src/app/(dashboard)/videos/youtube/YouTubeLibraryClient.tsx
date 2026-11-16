@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
@@ -16,6 +17,7 @@ type Suggestion = {
   status: "pending" | "approved" | "rejected";
   targetGrades: string[];
   reviewReason: string | null;
+  note?: string | null;
   createdAt: string;
 };
 
@@ -161,6 +163,7 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
                   <div>
                     <h3 className="font-semibold">{item.title}</h3>
                     <p className="text-xs text-muted-foreground">{item.channelTitle ?? "YouTube"} · Submitted {new Date(item.createdAt).toLocaleDateString()}</p>
+                    {item.note && <p className="mt-1 text-sm text-muted-foreground">Student note: {item.note}</p>}
                     <a href={item.url} target="_blank" rel="noreferrer" className="text-xs text-primary underline">Open original video</a>
                   </div>
                   <Input
