@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { LoginForm } from "./LoginForm";
 import { getDb } from "@/lib/mongo/client";
 import { getSessionUser } from "@/lib/auth/session";
+import { getRoleHomePath } from "@/lib/auth/portal";
 
 export const metadata: Metadata = {
   title: "Sign in - Dyne",
@@ -19,7 +20,7 @@ export default async function LoginPage() {
   const db = await getDb().catch(() => null);
   if (db) {
     const user = await getSessionUser(db).catch(() => null);
-    if (user) redirect("/feed");
+    if (user) redirect(getRoleHomePath(user.role));
   }
 
   return (
