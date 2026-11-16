@@ -108,6 +108,7 @@ export async function GET(request: Request) {
     password_fields_exposed: false,
     // Only a super-admin may grant/revoke admin or super_admin.
     canAssignRoles: user.role === "super_admin",
+    canManageGrades: true,
   });
 }
 /** Assign a role. Server-side only; client-supplied roles are never trusted. */
