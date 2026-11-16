@@ -1,6 +1,6 @@
 # Dyne account bootstrap and database checks
 
-Dyne currently stores accounts and sessions in MongoDB. Supabase credentials do not replace the MongoDB variables used by these routes.
+Dyne stores accounts and sessions in MongoDB. The persisted MongoDB role is the authority for every login portal and protected route.
 
 ## 1. Check the deployed database
 
@@ -10,33 +10,46 @@ Open `/api/health/db` on the deployed site. A healthy response is:
 { "ok": true, "database": "connected" }
 ```
 
-If it reports `not_configured`, add `MONGODB_URI` to the deployment environment. If it reports `unreachable`, verify the Atlas database user, password/URI encoding, database name, and Network Access IP allow-list. Also configure `MONGODB_DB` and a unique `AUTH_SECRET` (at least 32 characters) in the same deployment environment, then redeploy.
+If it reports `not_configured`, add `MONGODB_URI` to the deployment environment. If it reports `unreachable`, verify the Atlas database user, URI encoding, database name, and Network Access allow-list. Configure `MONGODB_DB` and a unique `AUTH_SECRET` in the same environment, then redeploy.
 
 Never put real database credentials in Git or expose them with a `NEXT_PUBLIC_` prefix.
 
-## 2. Provision the initial staff accounts
+## 2. Provision the three account types
 
-The one-time bootstrap command creates or updates the account IDs `admin0` (role `super_admin`) and `staff0` (role `teacher`). It hashes passwords with bcrypt and sets `mustChangePassword` so each account must choose a new password after first sign-in.
+The bootstrap command provisions separate identities:
 
-Configure these variables only in a secure shell/deployment secret store:
+| Portal | Default account ID | Default email | MongoDB role |
+|---|---|---|---|
+| Administrator | `admin0` | `admin0@dyne.local` | `super_admin` |
+| Teacher | `teacher0` | `teacher0@dyne.local` | `teacher` |
+| Staff | `staff0` | `staff0@dyne.local` | `staff` |
 
-- `MONGODB_URI`
-- `MONGODB_DB`
-- `ADMIN_BOOTSTRAP_PASSWORD` (required to provision admin0)
-- `TEACHER_BOOTSTRAP_PASSWORD` (required to provision staff0)
+Set one or more of these password variables in a trusted shell or secret manager:
 
-Optional account fields are `ADMIN_BOOTSTRAP_USERNAME`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_DISPLAY_NAME`, and the matching `TEACHER_BOOTSTRAP_*` variables. Defaults are `admin0` / `admin0@dyne.local` and `staff0` / `staff0@dyne.local`.
+- `ADMIN_BOOTSTRAP_PASSWORD`
+- `TEACHER_BOOTSTRAP_PASSWORD`
+- `STAFF_BOOTSTRAP_PASSWORD`
 
-From a trusted machine with the repository installed, dependencies installed, and the intended MongoDB URI selected, run:
+Each password must be 12–128 characters. Optional account overrides are `*_BOOTSTRAP_USERNAME`, `*_BOOTSTRAP_EMAIL`, and `*_BOOTSTRAP_DISPLAY_NAME` for the matching account type. Usernames and emails must be unique.
+
+From a trusted machine with dependencies installed and the intended MongoDB URI selected, run:
 
 ```sh
 npm run bootstrap:admin
 ```
 
-The script does not print passwords. Do not set bootstrap passwords in the committed `.env.example`; use local untracked environment files or a secret manager. After successful provisioning, remove the bootstrap password variables and redeploy/restart. The accounts remain in MongoDB; their passwords are not hardcoded into the app.
+The script hashes passwords with bcrypt and sets `mustChangePassword`; each account is forced to choose a new password after first sign-in. It does not print passwords. Remove the bootstrap password variables after provisioning. The account records remain in MongoDB.
 
-Use strong unique bootstrap passwords whenever possible. The supplied short starter passwords should be treated as temporary only and changed immediately.
+The script updates an existing record only when its configured username or email matches that same account. If those identifiers resolve to different records, it stops instead of merging identities.
 
-## 3. Sign-in behavior
+## 3. Portal and authorization behavior
 
-The normal, teacher, and administrator forms accept either an email address or account ID. Portal selection never grants privileges: the account's MongoDB role is checked on the server. If signup reports that the account was created but automatic sign-in failed, use the new account ID/email and password at `/login` after the database is healthy.
+- `/admin/login` accepts only `admin` and `super_admin`; it opens `/admin`.
+- `/teacher/login` accepts only `teacher`; it opens `/teacher`.
+- `/staff/login` accepts only `staff`; it opens the staff member's authenticated `/dashboard`.
+- The regular `/login` accepts any active account and sends it to the workspace associated with its stored role.
+- Selecting a portal never grants a role. The server checks the MongoDB role before creating a session.
+- Suspended and banned users are refused. Accounts marked `mustChangePassword` can only reach the password-rotation screen until the password is changed.
+- Privileged APIs independently enforce server-side permissions; hiding a link in the UI is not an authorization check.
+
+If signup reports that an account was created but automatic sign-in failed, use the new account ID/email and password at `/login` after the database is healthy.
