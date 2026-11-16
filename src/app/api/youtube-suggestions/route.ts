@@ -41,11 +41,21 @@ async function getYouTubeMetadata(videoId: string) {
     items?: Array<{
       snippet?: { title?: string; description?: string; channelTitle?: string; thumbnails?: { medium?: { url?: string }; default?: { url?: string } } };
       status?: { privacyStatus?: string; embeddable?: boolean };
-      contentDetails?: { duration?: string };
+      contentDetails?: {
+        duration?: string;
+        contentRating?: { ytRating?: string };
+        regionRestriction?: { blocked?: string[] };
+      };
     }>;
   };
   const item = data.items?.[0];
-  if (!item || item.status?.privacyStatus !== "public" || item.status.embeddable === false) {
+  if (
+    !item ||
+    item.status?.privacyStatus !== "public" ||
+    item.status.embeddable === false ||
+    item.contentDetails?.contentRating?.ytRating === "ytAgeRestricted" ||
+    item.contentDetails?.regionRestriction?.blocked?.includes("IN")
+  ) {
     throw new Error("VIDEO_NOT_EMBEDDABLE");
   }
   return {
