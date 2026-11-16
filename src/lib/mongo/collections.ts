@@ -542,6 +542,7 @@ export interface YouTubeSuggestionDoc extends Document {
   duration: string | null;
   suggestedBy: ObjectId;
   suggestedByRole: UserRole;
+  suggestionNote: string | null;
   status: "pending" | "approved" | "rejected";
   targetGrades: string[];
   reviewReason: string | null;
@@ -1238,7 +1239,7 @@ async function createAllIndexes(db: Db): Promise<void> {
   idx("videos", { moderationStatus: 1, createdAt: -1 });
   idx("youtubeSuggestions", { status: 1, createdAt: -1, _id: -1 });
   idx("youtubeSuggestions", { suggestedBy: 1, createdAt: -1 });
-  idx("youtubeSuggestions", { videoId: 1, status: 1 });
+  idx("youtubeSuggestions", { videoId: 1 }, { unique: true });
   idx("youtubeSuggestions", { status: 1, targetGrades: 1, createdAt: -1 });
   // Reaction lookups for video/reel like counts and toggles.
   idx("reactions", { targetType: 1, targetId: 1, userId: 1 });
