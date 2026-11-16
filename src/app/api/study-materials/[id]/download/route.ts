@@ -4,6 +4,7 @@ import { ensureIndexes, col, type StudyMaterialDoc } from "@/lib/mongo/collectio
 import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 import { getStorageDriver } from "@/lib/storage";
+import { R2StorageDriver } from "@/lib/storage/r2";
 import { mimeForKey } from "@/lib/storage/types";
 
 /**
@@ -29,9 +30,36 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!row || row.isRemoved || row.status !== "approved") {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  // Students can only retrieve materials for their own enrolled grade. Staff
+  // roles retain cross-grade access for teaching and moderation.
+  if (user.role === "student") {
+    const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
+    const enrolledGrade = typeof profile?.classGrade === "string" ? profile.classGrade.trim().toLowerCase() : "";
+    const materialGrade = row.classGrade.trim().toLowerCase();
+    if (!enrolledGrade || (materialGrade !== enrolledGrade && materialGrade.split(/[- ]/)[0] !== enrolledGrade.split(/[- ]/)[0])) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+  }
+  const storage = getStorageDriver();
+  if (storage instanceof R2StorageDriver) {
+    // Redirect to a short-lived R2 URL: large PDFs and videos bypass the
+    // serverless function entirely, support HTTP Range, and do not consume
+    // function memory or Mongo connections while bytes are transferred.
+    const safeName = row.fileName.replace(/[\"\\r\\n]/g, "_");
+    const signedUrl = await storage.signedUrl(
+      row.bucket as never,
+      row.key,
+      300,
+      `attachment; filename="${safeName}"`
+    );
+    return new NextResponse(null, {
+      status: 302,
+      headers: { Location: signedUrl, "Cache-Control": "private, no-store" },
+    });
+  }
   let file;
   try {
-    file = await getStorageDriver().get(row.bucket as never, row.key);
+    file = await storage.get(row.bucket as never, row.key);
   } catch {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
