@@ -57,6 +57,7 @@ export async function loginAction(formData: FormData) {
   store.set(SESSION_COOKIE, token, { ...sessionCookieOptions(), expires: expiresAt });
 
   revalidatePath("/", "layout");
+  if (user.mustChangePassword) redirect("/update-password?reason=forced");
   redirect(getRoleHomePath(user.role));
 }
 
