@@ -76,6 +76,7 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
     }
   }, [canSuggest, canReview]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- initial API data sync for this page
   useEffect(() => { void load(); }, [load]);
 
   async function loadMore(section: "approved" | "mine" | "queue") {
