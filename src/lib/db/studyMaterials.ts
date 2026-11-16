@@ -155,7 +155,7 @@ export async function listStudyMaterials(
   }
   if (opts.search?.trim()) {
     const rx = { $regex: opts.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
-    q.$or = [{ title: rx }, { description: rx }, { subject: rx }];
+    q.$text = { $search: opts.search.trim().slice(0, 100) };
   }
   if (opts.subject) q.subject = { $regex: `^${opts.subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" };
   if (opts.classGrade) q.classGrade = { $regex: `^${opts.classGrade.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" };
