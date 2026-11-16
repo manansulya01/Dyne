@@ -37,6 +37,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   await ensureIndexes(db);
+  const pending = await col<YouTubeSuggestionDoc>(db, "youtubeSuggestions").findOne({
+    _id: toObjectId(id),
+    status: "pending",
+  } as never);
+  if (!pending) return NextResponse.json({ error: "Suggestion not found or already reviewed." }, { status: 404 });
+  if (user.role === "teacher" && pending.suggestedBy.toHexString() === user.id) {
+    return NextResponse.json({ error: "Another teacher or administrator must review your own submission." }, { status: 403 });
+  }
   const now = new Date();
   const result = await col<YouTubeSuggestionDoc>(db, "youtubeSuggestions").updateOne(
     { _id: toObjectId(id), status: "pending" } as never,
