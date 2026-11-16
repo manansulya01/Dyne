@@ -238,6 +238,7 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
               ))}
             </div>
           )}
+          {queuePage.hasMore && <Button variant="outline" disabled={loadingMore !== null} onClick={() => void loadMore("queue")}>{loadingMore === "queue" ? "Loading…" : "Load more pending"}</Button>}
         </section>
       )}
 
@@ -256,6 +257,7 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
               ))}
             </div>
           )}
+          {minePage.hasMore && <Button variant="outline" disabled={loadingMore !== null} onClick={() => void loadMore("mine")}>{loadingMore === "mine" ? "Loading…" : "Load more submissions"}</Button>}
         </section>
       )}
 
