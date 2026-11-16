@@ -65,7 +65,6 @@ export const profileUpdateSchema = z.object({
     .max(50, "Display name must be at most 50 characters")
     .optional(),
   bio: z.string().max(500, "Bio must be at most 500 characters").optional(),
-  classGrade: z.string().max(50).optional(),
   house: z.string().max(50).optional(),
   interests: z.array(z.string().max(30)).max(10).optional(),
   profileTags: z.array(z.string().max(24)).max(8).optional(),
