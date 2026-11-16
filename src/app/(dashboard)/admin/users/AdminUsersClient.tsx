@@ -40,12 +40,14 @@ export function AdminUsersClient({
   initialUsers,
   initialTotal,
   canAssignRoles,
+  canManageGrades,
   initialHasMore,
 }: {
   currentRole: string;
   initialUsers: AdminUser[];
   initialTotal: number;
   canAssignRoles: boolean;
+  canManageGrades: boolean;
   initialHasMore: boolean;
 }) {
   const [users, setUsers] = useState<AdminUser[]>(initialUsers);
@@ -56,6 +58,7 @@ export function AdminUsersClient({
   const [role, setRole] = useState("");
   const [status, setStatus] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [gradeDrafts, setGradeDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -256,6 +259,40 @@ export function AdminUsersClient({
                     </select>
                   </label>
                 ) : null}
+
+                {canManageGrades && (
+                  <div className="flex min-w-64 flex-1 items-center gap-2">
+                    <Input
+                      value={gradeDrafts[u.id] ?? u.class_grade ?? ""}
+                      onChange={(e) => setGradeDrafts((prev) => ({ ...prev, [u.id]: e.target.value }))}
+                      placeholder="Enrolled class / grade"
+                      aria-label="Enrolled grade"
+                      maxLength={50}
+                      className="min-h-[44px]"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="min-h-[44px] shrink-0"
+                      onClick={async () => {
+                        const res = await fetch("/api/admin/users/grade", {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ userId: u.id, classGrade: gradeDrafts[u.id] ?? u.class_grade ?? "" }),
+                        });
+                        const data = await res.json().catch(() => null);
+                        if (!res.ok) {
+                          setNotice(typeof data?.error === "string" ? data.error : "Could not update enrolled grade.");
+                          return;
+                        }
+                        setNotice("Enrolled grade updated and audited.");
+                        await load(0);
+                      }}
+                    >
+                      Save grade
+                    </Button>
+                  </div>
+                )}
 
                 {u.account_status !== "banned" && (
                   <Button
