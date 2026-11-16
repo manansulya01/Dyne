@@ -104,11 +104,20 @@ export class R2StorageDriver implements StorageDriver {
   }
 
   /** Short-lived signed URL for private objects (served via /api/files route). */
-  async signedUrl(bucket: StorageBucket, key: string, expiresInSeconds = 3600): Promise<string> {
+  async signedUrl(
+    bucket: StorageBucket,
+    key: string,
+    expiresInSeconds = 300,
+    responseContentDisposition?: string
+  ): Promise<string> {
     assertSafeKey(key);
     return getSignedUrl(
       this.client,
-      new GetObjectCommand({ Bucket: this.bucketName(bucket), Key: key }),
+      new GetObjectCommand({
+        Bucket: this.bucketName(bucket),
+        Key: key,
+        ...(responseContentDisposition ? { ResponseContentDisposition: responseContentDisposition } : {}),
+      }),
       { expiresIn: expiresInSeconds }
     );
   }
