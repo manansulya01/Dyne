@@ -73,7 +73,6 @@ export async function PATCH(request: Request) {
   const updated = await updateOwnProfile(db, user.id, {
     displayName: validated.data.displayName,
     bio: validated.data.bio,
-    classGrade: validated.data.classGrade,
     house: validated.data.house,
     interests: validated.data.interests,
     profileTags: validated.data.profileTags ? sanitizeProfileTags(validated.data.profileTags) : undefined,
