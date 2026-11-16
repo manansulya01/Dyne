@@ -63,7 +63,6 @@ export async function GET(request: Request) {
   const auth = await withUser();
   if (!auth.ok) return auth.response;
   const { db, user } = auth.ctx;
-  await ensureIndexes(db);
   const { searchParams } = new URL(request.url);
   const mine = searchParams.get("mine") === "true";
   const review = searchParams.get("review") === "true";
@@ -147,7 +146,6 @@ export async function POST(request: Request) {
 
   const existing = await col<YouTubeSuggestionDoc>(db, "youtubeSuggestions").findOne({
     videoId,
-    status: { $in: ["pending", "approved"] },
   } as never);
   if (existing) return NextResponse.json({ error: "This video has already been suggested or approved." }, { status: 409 });
 
