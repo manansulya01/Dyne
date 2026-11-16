@@ -21,6 +21,8 @@ type Suggestion = {
   createdAt: string;
 };
 
+type PageState = { cursor: string | null; hasMore: boolean };
+
 const staffRoles = new Set(["teacher", "admin", "super_admin"]);
 
 export function YouTubeLibraryClient({ role }: { role: string }) {
@@ -30,6 +32,10 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
   const [approved, setApproved] = useState<Suggestion[]>([]);
   const [mine, setMine] = useState<Suggestion[]>([]);
   const [queue, setQueue] = useState<Suggestion[]>([]);
+  const [approvedPage, setApprovedPage] = useState<PageState>({ cursor: null, hasMore: false });
+  const [minePage, setMinePage] = useState<PageState>({ cursor: null, hasMore: false });
+  const [queuePage, setQueuePage] = useState<PageState>({ cursor: null, hasMore: false });
+  const [loadingMore, setLoadingMore] = useState<"approved" | "mine" | "queue" | null>(null);
   const [url, setUrl] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -51,18 +57,61 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
       const payloads = await Promise.all(responses.map(async (r) => {
         const json = await r.json();
         if (!r.ok) throw new Error(typeof json.error === "string" ? json.error : "Could not load YouTube library");
-        return json as { suggestions?: Suggestion[] };
+        return json as { suggestions?: Suggestion[]; cursor?: string | null; hasMore?: boolean };
       }));
       setApproved(payloads[0].suggestions ?? []);
+      setApprovedPage({ cursor: payloads[0].cursor ?? null, hasMore: Boolean(payloads[0].hasMore) });
       let index = 1;
-      if (canSuggest) setMine(payloads[index++].suggestions ?? []);
-      if (canReview) setQueue(payloads[index].suggestions ?? []);
+      if (canSuggest) {
+        setMine(payloads[index].suggestions ?? []);
+        setMinePage({ cursor: payloads[index].cursor ?? null, hasMore: Boolean(payloads[index].hasMore) });
+        index++;
+      }
+      if (canReview) {
+        setQueue(payloads[index].suggestions ?? []);
+        setQueuePage({ cursor: payloads[index].cursor ?? null, hasMore: Boolean(payloads[index].hasMore) });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load YouTube library");
     }
   }, [canSuggest, canReview]);
 
   useEffect(() => { void load(); }, [load]);
+
+  async function loadMore(section: "approved" | "mine" | "queue") {
+    const page = section === "approved" ? approvedPage : section === "mine" ? minePage : queuePage;
+    if (!page.hasMore || !page.cursor || loadingMore) return;
+    setLoadingMore(section);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ limit: section === "queue" ? "50" : section === "mine" ? "30" : "24", before: page.cursor });
+      if (section === "mine") params.set("mine", "true");
+      if (section === "queue") params.set("review", "true");
+      const response = await fetch(\`/api/youtube-suggestions?\${params.toString()}\`);
+      const data = await response.json() as { suggestions?: Suggestion[]; cursor?: string | null; hasMore?: boolean; error?: string };
+      if (!response.ok) throw new Error(data.error ?? "Could not load more videos");
+      const append = (previous: Suggestion[], next: Suggestion[]) => {
+        const seen = new Set(previous.map((item) => item.id));
+        return [...previous, ...next.filter((item) => !seen.has(item.id))];
+      };
+      const nextPage = { cursor: data.cursor ?? null, hasMore: Boolean(data.hasMore) };
+      if (section === "approved") {
+        setApproved((previous) => append(previous, data.suggestions ?? []));
+        setApprovedPage(nextPage);
+      } else if (section === "mine") {
+        setMine((previous) => append(previous, data.suggestions ?? []));
+        setMinePage(nextPage);
+      } else {
+        setQueue((previous) => append(previous, data.suggestions ?? []));
+        setQueuePage(nextPage);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load more videos");
+    } finally {
+      setLoadingMore(null);
+    }
+  }
+
 
   async function submitSuggestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
