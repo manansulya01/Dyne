@@ -21,5 +21,6 @@ export function canAccessStaffPortal(role: UserRole, portal: StaffPortal): boole
 export function getRoleHomePath(role: UserRole): string {
   if (role === "admin" || role === "super_admin") return "/admin";
   if (role === "teacher") return "/teacher";
-  return "/dashboard";
+  if (role === "staff") return "/dashboard";
+  return "/feed";
 }
