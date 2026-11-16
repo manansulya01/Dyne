@@ -125,7 +125,9 @@ export async function POST(request: Request) {
   const auth = await withUser();
   if (!auth.ok) return auth.response;
   const { db, user } = auth.ctx;
-  if (user.role !== "student") return NextResponse.json({ error: "Only students can submit video suggestions." }, { status: 403 });
+  if (!["student", "teacher", "admin", "super_admin"].includes(user.role)) {
+    return NextResponse.json({ error: "This account cannot submit YouTube suggestions." }, { status: 403 });
+  }
   const limited = guardRate(request, user.id, "uploads");
   if (limited) return limited;
   const body = await request.json().catch(() => null);
