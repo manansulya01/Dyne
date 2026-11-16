@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
 import { getDb } from "@/lib/mongo/client";
-import { ensureIndexes } from "@/lib/mongo/collections";
+import { ensureIndexes, col } from "@/lib/mongo/collections";
 import { studyMaterialCreateSchema, STUDY_MATERIAL_TYPES } from "@/lib/validation";
 import { createStudyMaterial, listStudyMaterials } from "@/lib/db/studyMaterials";
 import { toStudyMaterialJSON } from "@/lib/db/contracts";
@@ -9,6 +9,7 @@ import { parseLimitParam } from "@/lib/utils";
 import { guardRate, jsonError, withAnyPermission, withUser } from "@/lib/security/authorize";
 import { canUploadStudyMaterials } from "@/lib/permissions";
 import type { StudyMaterialType } from "@/lib/mongo/collections";
+import { toObjectId } from "@/lib/mongo/ids";
 
 /**
  * Study materials API.
@@ -54,6 +55,7 @@ export async function GET(request: NextRequest) {
   const auth = await withUser();
   if (!auth.ok) return auth.response;
   const { db, user } = auth.ctx;
+  await ensureIndexes(db);
 
   const { searchParams } = new URL(request.url);
   const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
@@ -76,10 +78,17 @@ export async function GET(request: NextRequest) {
     if (!isNaN(+p)) before = p;
   }
 
+  // Students can browse only their enrolled grade. Ignore the client filter
+  // for students so a modified request cannot expose another class's files.
+  let effectiveClassGrade = classGrade;
+  if (user.role === "student") {
+    const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
+    effectiveClassGrade = typeof profile?.classGrade === "string" ? profile.classGrade.trim() : "__unassigned__";
+  }
   const items = await listStudyMaterials(db, {
     search,
     subject,
-    classGrade,
+    classGrade: effectiveClassGrade,
     materialType:
       materialType && (STUDY_MATERIAL_TYPES as readonly string[]).includes(materialType)
         ? (materialType as StudyMaterialType)
