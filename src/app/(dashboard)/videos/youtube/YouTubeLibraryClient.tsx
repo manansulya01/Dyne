@@ -87,7 +87,7 @@ export function YouTubeLibraryClient({ role }: { role: string }) {
       const params = new URLSearchParams({ limit: section === "queue" ? "50" : section === "mine" ? "30" : "24", before: page.cursor });
       if (section === "mine") params.set("mine", "true");
       if (section === "queue") params.set("review", "true");
-      const response = await fetch(\`/api/youtube-suggestions?\${params.toString()}\`);
+      const response = await fetch(`/api/youtube-suggestions?${params.toString()}`);
       const data = await response.json() as { suggestions?: Suggestion[]; cursor?: string | null; hasMore?: boolean; error?: string };
       if (!response.ok) throw new Error(data.error ?? "Could not load more videos");
       const append = (previous: Suggestion[], next: Suggestion[]) => {
