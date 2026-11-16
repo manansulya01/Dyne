@@ -89,7 +89,7 @@ export async function GET(request: Request) {
     query.suggestedBy = toObjectId(user.id);
   } else {
     query.status = "approved";
-    if (user.role === "student") {
+    if (!teacherRoles.has(user.role)) {
       const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
       const grade = typeof profile?.classGrade === "string" ? profile.classGrade.trim() : "";
       const gradeNumber = grade.match(/\d{1,2}/)?.[0];
