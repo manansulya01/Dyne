@@ -81,8 +81,13 @@ export async function GET(request: Request) {
     if (user.role === "student") {
       const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
       const grade = typeof profile?.classGrade === "string" ? profile.classGrade.trim() : "";
+      const gradeNumber = grade.match(/\\d{1,2}/)?.[0];
       query.$or = grade
-        ? [{ targetGrades: "*" }, { targetGrades: grade }, { targetGrades: grade.split(/[- ]/)[0] }]
+        ? [
+            { targetGrades: "*" },
+            { targetGrades: grade },
+            ...(gradeNumber ? [{ targetGrades: gradeNumber }, { targetGrades: `Grade ${gradeNumber}` }] : []),
+          ]
         : [{ targetGrades: "*" }];
     }
   }
