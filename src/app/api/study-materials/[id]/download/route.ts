@@ -36,8 +36,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
     const enrolledGrade = typeof profile?.classGrade === "string" ? profile.classGrade.trim().toLowerCase() : "";
     const materialGrade = row.classGrade.trim().toLowerCase();
-    const enrolledGradeNumber = enrolledGrade.match(/\\d{1,2}/)?.[0];
-    const materialGradeNumber = materialGrade.match(/\\d{1,2}/)?.[0];
+    const enrolledGradeNumber = enrolledGrade.match(/\d{1,2}/)?.[0];
+    const materialGradeNumber = materialGrade.match(/\d{1,2}/)?.[0];
     if (!enrolledGrade || (materialGrade !== enrolledGrade && (!enrolledGradeNumber || enrolledGradeNumber !== materialGradeNumber))) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
