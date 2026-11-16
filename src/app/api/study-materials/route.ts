@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
   // Students can browse only their enrolled grade. Ignore the client filter
   // for students so a modified request cannot expose another class's files.
   let effectiveClassGrade = classGrade;
-  if (user.role === "student") {
+  if (!["teacher", "staff", "moderator", "admin", "super_admin"].includes(user.role)) {
     const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
     effectiveClassGrade = typeof profile?.classGrade === "string" ? profile.classGrade.trim() : "__unassigned__";
   }
