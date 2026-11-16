@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getDb } from "@/lib/mongo/client";
-import { ensureIndexes, col, type YouTubeSuggestionDoc } from "@/lib/mongo/collections";
+import { col, type YouTubeSuggestionDoc } from "@/lib/mongo/collections";
 import { withUser, guardRate } from "@/lib/security/authorize";
 import { toObjectId } from "@/lib/mongo/ids";
 
@@ -110,6 +109,7 @@ export async function GET(request: Request) {
       status: row.status,
       targetGrades: row.targetGrades,
       reviewReason: row.reviewReason,
+      note: row.suggestionNote,
       createdAt: row.createdAt.toISOString(),
     })),
     hasMore,
@@ -152,12 +152,15 @@ export async function POST(request: Request) {
   if (existing) return NextResponse.json({ error: "This video has already been suggested or approved." }, { status: 409 });
 
   const now = new Date();
-  const inserted = await col<YouTubeSuggestionDoc>(db, "youtubeSuggestions").insertOne({
+  let inserted;
+  try {
+    inserted = await col<YouTubeSuggestionDoc>(db, "youtubeSuggestions").insertOne({
     videoId,
     url: `https://www.youtube.com/watch?v=${videoId}`,
     ...metadata,
     suggestedBy: toObjectId(user.id),
     suggestedByRole: user.role,
+    suggestionNote: parsed.data.note?.trim().slice(0, 500) || null,
     status: "pending",
     targetGrades: [],
     reviewReason: null,
@@ -165,6 +168,12 @@ export async function POST(request: Request) {
     reviewedAt: null,
     createdAt: now,
     updatedAt: now,
-  } as never);
+    } as never);
+  } catch (error) {
+    if (error instanceof Error && /duplicate key/i.test(error.message)) {
+      return NextResponse.json({ error: "This video has already been suggested." }, { status: 409 });
+    }
+    throw error;
+  }
   return NextResponse.json({ success: true, id: inserted.insertedId.toHexString(), status: "pending" }, { status: 201 });
 }
