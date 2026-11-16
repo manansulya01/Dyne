@@ -16,8 +16,84 @@ declare global {
 
 function createClientPromise(): Promise<MongoClient> {
   const { uri } = getMongoEnv();
+  const configuredPoolSize = Number(process.env.MONGODB_MAX_POOL_SIZE ?? 20);
+  const maxPoolSize = Number.isInteger(configuredPoolSize)
+    ? Math.min(50, Math.max(5, configuredPoolSize))
+    : 20;
   const client = new MongoClient(uri, {
-    maxPoolSize: 10,
+    maxPoolSize,
+    minPoolSize: 0,
+    maxConnecting: 5,
+    maxIdleTimeMS: 60_000,
+    // Bounded so an unreachable database fails fast instead of hanging the
+    // request (verified: with a paused mongod the API stopped responding
+    // rather than returning a prompt error).
+    serverSelectionTimeoutMS: 5000,
+    connectTimeoutMS: 5000,
+    socketTimeoutMS: 20000,
+    waitQueueTimeoutMS: 5000,
+  });
+  return client.connect().catch((err: unknown) => {
+    // Never cache a rejected connection: the next request must retry so the
+    // app recovers as soon as MongoDB is reachable again.
+    if (globalThis.__dyneMongoClient) {
+      globalThis.__dyneMongoClient = undefined;
+    }
+    try {
+      void client.close().catch(() => {});
+    } catch {
+      /* ignore close errors */
+    }
+    throw toActionableMongoError(err);
+  });
+}
+
+export function getMongoClient(): Promise<MongoClient> {
+  if (!globalThis.__dyneMongoClient) {
+    globalThis.__dyneMongoClient = createClientPromise();
+  }
+  return globalThis.__dyneMongoClient.catch((err: unknown) => {
+    // Defensive: if a rejected promise was cached by an older path, clear it
+    // so later requests retry instead of replaying the same failure.
+    globalThis.__dyneMongoClient = undefined;
+    throw err;
+  });
+}
+
+export async function getDb(): Promise<Db> {
+  const { dbName } = getMongoEnv();
+  const client = await getMongoClient();
+  // Do not issue a ping on every request. The cached client is already
+  // connected; each real query naturally detects a dropped connection. This
+  // saves one MongoDB round trip per API request under high concurrency.
+  return client.db(dbName);
+}mport { MongoClient, Db, ObjectId } from "mongodb";
+import { getMongoEnv } from "./env";
+
+/**
+ * Cached MongoDB client.
+ *
+ * - Uses a module-global cache so development hot-reloads reuse one connection
+ *   pool instead of exhausting server connections.
+ * - Server-only: this module must never be imported by client components.
+ */
+
+declare global {
+  // `var` is required syntax for global augmentation.
+  var __dyneMongoClient: Promise<MongoClient> | undefined;
+}
+
+function createClientPromise(): Promise<MongoClient> {
+  const { uri } = getMongoEnv();
+  const configuredPoolSize = Number(process.env.MONGODB_MAX_POOL_SIZE ?? 20);
+  const maxPoolSize = Number.isInteger(configuredPoolSize)
+    ? Math.min(50, Math.max(5, configuredPoolSize))
+    : 20;
+  const client = new MongoClient(uri, {
+    maxPoolSize,
+    minPoolSize: 0,
+    maxConnecting: 5,
+    maxIdleTimeMS: 60_000,
     // Bounded so an unreachable database fails fast instead of hanging the
     // request (verified: with a paused mongod the API stopped responding
     // rather than returning a prompt error).
