@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes, col, type YouTubeSuggestionDoc } from "@/lib/mongo/collections";
 import { withUser } from "@/lib/security/authorize";
 import { toObjectId, objectIdSchema } from "@/lib/mongo/ids";
