@@ -25,9 +25,6 @@ function createClientPromise(): Promise<MongoClient> {
     minPoolSize: 0,
     maxConnecting: 5,
     maxIdleTimeMS: 60_000,
-    // Bounded so an unreachable database fails fast instead of hanging the
-    // request (verified: with a paused mongod the API stopped responding
-    // rather than returning a prompt error).
     serverSelectionTimeoutMS: 5000,
     connectTimeoutMS: 5000,
     socketTimeoutMS: 20000,
@@ -67,85 +64,6 @@ export async function getDb(): Promise<Db> {
   // connected; each real query naturally detects a dropped connection. This
   // saves one MongoDB round trip per API request under high concurrency.
   return client.db(dbName);
-}mport { MongoClient, Db, ObjectId } from "mongodb";
-import { getMongoEnv } from "./env";
-
-/**
- * Cached MongoDB client.
- *
- * - Uses a module-global cache so development hot-reloads reuse one connection
- *   pool instead of exhausting server connections.
- * - Server-only: this module must never be imported by client components.
- */
-
-declare global {
-  // `var` is required syntax for global augmentation.
-  var __dyneMongoClient: Promise<MongoClient> | undefined;
-}
-
-function createClientPromise(): Promise<MongoClient> {
-  const { uri } = getMongoEnv();
-  const configuredPoolSize = Number(process.env.MONGODB_MAX_POOL_SIZE ?? 20);
-  const maxPoolSize = Number.isInteger(configuredPoolSize)
-    ? Math.min(50, Math.max(5, configuredPoolSize))
-    : 20;
-  const client = new MongoClient(uri, {
-    maxPoolSize,
-    minPoolSize: 0,
-    maxConnecting: 5,
-    maxIdleTimeMS: 60_000,
-    // Bounded so an unreachable database fails fast instead of hanging the
-    // request (verified: with a paused mongod the API stopped responding
-    // rather than returning a prompt error).
-    serverSelectionTimeoutMS: 5000,
-    connectTimeoutMS: 5000,
-    socketTimeoutMS: 20000,
-    waitQueueTimeoutMS: 5000,
-  });
-  return client.connect().catch((err: unknown) => {
-    // Never cache a rejected connection: the next request must retry so the
-    // app recovers as soon as MongoDB is reachable again.
-    if (globalThis.__dyneMongoClient) {
-      globalThis.__dyneMongoClient = undefined;
-    }
-    try {
-      void client.close().catch(() => {});
-    } catch {
-      /* ignore close errors */
-    }
-    throw toActionableMongoError(err);
-  });
-}
-
-export function getMongoClient(): Promise<MongoClient> {
-  if (!globalThis.__dyneMongoClient) {
-    globalThis.__dyneMongoClient = createClientPromise();
-  }
-  return globalThis.__dyneMongoClient.catch((err: unknown) => {
-    // Defensive: if a rejected promise was cached by an older path, clear it
-    // so later requests retry instead of replaying the same failure.
-    globalThis.__dyneMongoClient = undefined;
-    throw err;
-  });
-}
-
-export async function getDb(): Promise<Db> {
-  const { dbName } = getMongoEnv();
-  let client: MongoClient;
-  try {
-    client = await getMongoClient();
-  } catch (err) {
-    throw toActionableMongoError(err);
-  }
-  try {
-    // Harmless read-only check that surfaces an unreachable server here
-    // (with an actionable message) instead of midway through a query.
-    await client.db(dbName).command({ ping: 1 });
-  } catch (err) {
-    globalThis.__dyneMongoClient = undefined;
-    throw toActionableMongoError(err);
-  }
-  return client.db(dbName);
 }
 
 /**
@@ -175,7 +93,7 @@ export function toActionableMongoError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
-/** Test helper: reset the cached client (used by the test harness only). */
+/** Test helper: reset the cached client (used when databases are dropped between tests). */
 export function __resetMongoClientForTests(): void {
   globalThis.__dyneMongoClient = undefined;
 }
