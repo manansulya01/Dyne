@@ -40,3 +40,29 @@ The application now fails closed in production if the storage driver is not set 
 ## Important verification boundary
 
 Adding the R2 configuration does not provision cloud buckets or create credentials automatically. A project owner must configure those values in the cloud dashboard. Do not declare production uploads or moderation fully verified until the checklist has been run against the deployed app.
+
+
+## Student YouTube suggestions
+
+Dyne Watch now has a school-curated YouTube library at `/videos/youtube`.
+
+- Students submit a YouTube watch/share URL; the server extracts only a valid 11-character video ID.
+- The server validates the video with the YouTube Data API before saving it. Private, unavailable, or non-embeddable videos are refused.
+- Every student suggestion starts as `pending`; it is not visible in the student library.
+- Teachers and administrators review the queue and approve it for explicit grade(s), or use `*` for the whole school. Rejections require a reason.
+- Students see their own submission status; the general library returns only approved videos allowed for the student's enrolled grade.
+- Playback uses YouTube's privacy-enhanced `youtube-nocookie.com` embed. Dyne does not download, proxy, or re-host YouTube videos.
+
+Set `YOUTUBE_API_KEY` as a server-side encrypted environment variable in Vercel Preview and Production. Restrict the key to the YouTube Data API v3 and appropriate application restrictions. Never expose it as a `NEXT_PUBLIC_*` variable.
+
+## Study-material delivery and concurrency
+
+Study-material binaries live in private R2 object storage; MongoDB stores only searchable metadata and opaque object keys. The app must not expose an FTP daemon or storage credentials.
+
+- The student library uses indexed status/grade/time filters and a MongoDB text index for title, description, subject and tags.
+- Student listing and download authorization are scoped to the grade stored on the authenticated MongoDB user record; client-supplied grade filters cannot broaden access.
+- In production, the download endpoint returns a short-lived (5-minute) signed R2 URL. The browser downloads directly from R2, so large files do not pass through a Vercel function, consume its memory, or hold its MongoDB connection while bytes transfer. The signed URL supports normal object-store HTTP range behavior.
+- MongoDB clients are cached per warm app instance. A request no longer performs an extra `ping` round trip before its actual query. `MONGODB_MAX_POOL_SIZE` controls the per-instance pool (default 20, clamped to 5–50); tune it against the actual Atlas tier and Vercel instance count, not just the number of students.
+- Use small metadata pages (20–30 items), lazy-load previews, and fetch file bytes only when a student opens or downloads a resource.
+
+**Capacity boundary:** These changes reduce avoidable database round trips and keep file transfer off the app server, but they do not prove a 3,000-user capacity target. Before school-wide launch, run a realistic load test against the deployed Vercel + Atlas + R2 stack (including simultaneous sign-ins, library searches and file downloads), inspect Atlas connection/CPU/IOPS and Vercel function concurrency, and tune pool size and CDN behavior to the observed results. A file's download time still depends on its size and the student's network.
