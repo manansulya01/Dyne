@@ -158,7 +158,7 @@ export async function listStudyMaterials(
     q.$text = { $search: opts.search.trim().slice(0, 100) };
   }
   if (opts.subject) q.subject = { $regex: `^${opts.subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" };
-  if (opts.classGrade) q.classGrade = { $regex: `^${opts.classGrade.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" };
+  if (opts.classGrade) q.classGrade = opts.classGrade.trim();
   if (opts.materialType) q.materialType = opts.materialType;
   if (opts.tag) q.tags = opts.tag.slice(0, 30);
   if (opts.teacher) q.teacher = opts.teacher;
