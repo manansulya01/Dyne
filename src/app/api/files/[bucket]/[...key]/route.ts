@@ -68,8 +68,7 @@ export async function GET(_request: Request, { params }: Params) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
       if (!["teacher", "staff", "moderator", "admin", "super_admin"].includes(user.role)) {
-        const profile = await col(db, "users").findOne({ _id: toObjectId(user.id) } as never);
-        const enrolledGrade = typeof profile?.classGrade === "string" ? profile.classGrade.trim().toLowerCase() : "";
+        const enrolledGrade = user.classGrade?.trim().toLowerCase() ?? "";
         const materialGrade = material.classGrade.trim().toLowerCase();
         const enrolledNumber = enrolledGrade.match(/\d{1,2}/)?.[0];
         const materialNumber = materialGrade.match(/\d{1,2}/)?.[0];
