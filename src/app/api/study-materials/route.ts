@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
-import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes, col } from "@/lib/mongo/collections";
 import { studyMaterialCreateSchema, STUDY_MATERIAL_TYPES } from "@/lib/validation";
 import { createStudyMaterial, listStudyMaterials } from "@/lib/db/studyMaterials";
@@ -20,12 +19,10 @@ import { toObjectId } from "@/lib/mongo/ids";
  */
 
 export async function POST(request: NextRequest) {
-  const db = await getDb();
-  await ensureIndexes(db);
   // Only teachers/admins publish study materials (students cannot).
   const auth = await withAnyPermission(["study.upload", "study.manage"]);
   if (!auth.ok) return auth.response;
-  const { user } = auth.ctx;
+  const { db, user } = auth.ctx;
   if (!canUploadStudyMaterials(user.role)) {
     return jsonError(403, "Only teachers can upload study materials");
   }
@@ -55,7 +52,6 @@ export async function GET(request: NextRequest) {
   const auth = await withUser();
   if (!auth.ok) return auth.response;
   const { db, user } = auth.ctx;
-  await ensureIndexes(db);
 
   const { searchParams } = new URL(request.url);
   const limit = parseLimitParam(searchParams.get("limit"), 20, 50);
