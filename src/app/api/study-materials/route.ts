@@ -4,6 +4,7 @@ import { studyMaterialCreateSchema, STUDY_MATERIAL_TYPES } from "@/lib/validatio
 import { createStudyMaterial, listStudyMaterials } from "@/lib/db/studyMaterials";
 import { toStudyMaterialJSON } from "@/lib/db/contracts";
 import { parseLimitParam } from "@/lib/utils";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { guardRate, jsonError, withAnyPermission, withUser } from "@/lib/security/authorize";
 import { canUploadStudyMaterials } from "@/lib/permissions";
 import type { StudyMaterialType } from "@/lib/mongo/collections";
@@ -67,9 +68,12 @@ export async function GET(request: NextRequest) {
   const featuredOnly = searchParams.get("featured") === "true";
   const cursor = searchParams.get("cursor");
   let before: Date | undefined;
+  let beforeId: import("mongodb").ObjectId | undefined;
   if (cursor) {
-    const p = new Date(cursor);
-    if (!isNaN(+p)) before = p;
+    const [datePart, idPart] = cursor.split("|", 2);
+    const parsedDate = new Date(datePart);
+    if (Number.isFinite(parsedDate.getTime())) before = parsedDate;
+    if (idPart && objectIdSchema.safeParse(idPart).success) beforeId = toObjectId(idPart);
   }
 
   // Students can browse only their enrolled grade. Ignore the client filter
@@ -96,12 +100,13 @@ export async function GET(request: NextRequest) {
     featuredOnly,
     limit,
     before,
+    beforeId,
   });
   // Stable snake_case contract (download URLs gated server-side).
   const mapped = items.map((m) => toStudyMaterialJSON(m as unknown as Record<string, unknown>));
   return NextResponse.json({
     materials: mapped,
-    cursor: mapped.length ? mapped[mapped.length - 1].created_at : null,
+    cursor: mapped.length ? mapped[mapped.length - 1].created_at + "|" + mapped[mapped.length - 1].id : null,
     hasMore: mapped.length === limit,
     canUpload: canUploadStudyMaterials(user.role),
   });
