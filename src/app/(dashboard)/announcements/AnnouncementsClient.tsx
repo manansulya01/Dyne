@@ -140,6 +140,17 @@ export function AnnouncementsClient({
                       Expires {formatDate(a.ends_at)}
                     </p>
                   )}
+                  {a.attachment_url && (
+                    <a
+                      href={a.attachment_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      download
+                      className="mt-2 inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
+                    >
+                      Download attachment
+                    </a>
+                  )}
                   {a.link_url && (
                     <a
                       href={a.link_url}
