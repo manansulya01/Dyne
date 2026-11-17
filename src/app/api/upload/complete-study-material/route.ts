@@ -2,10 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { withUser, guardRate } from "@/lib/security/authorize";
 import { canUploadStudyMaterials } from "@/lib/permissions";
-import { assertSafeKey, isStorageBucket, sniffMismatch, validateUpload } from "@/lib/storage/types";
+import { assertSafeKey, sniffMismatch, validateUpload } from "@/lib/storage/types";
 import { getStorageDriver } from "@/lib/storage";
 import { R2StorageDriver } from "@/lib/storage/r2";
-import { buildKey } from "@/lib/storage/types";
 import { toObjectId } from "@/lib/mongo/ids";
 import { ensureIndexes, col, type PendingMediaDoc } from "@/lib/mongo/collections";
 
