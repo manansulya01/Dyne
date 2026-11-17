@@ -41,6 +41,19 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
   }
+  // Demo PDFs are public, read-only fixtures. Only the exact trusted host is allowed;
+  // ordinary materials always use the configured private object-storage driver.
+  const demoUrl = (row as StudyMaterialDoc & { demoDownloadUrl?: string }).demoDownloadUrl;
+  if (row.demoBatchId && typeof demoUrl === "string") {
+    try {
+      const parsed = new URL(demoUrl);
+      if (parsed.protocol === "https:" && parsed.hostname === "www.w3.org" && parsed.pathname === "/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf") {
+        return NextResponse.redirect(parsed, { status: 302, headers: { "Cache-Control": "private, no-store" } });
+      }
+    } catch {
+      // Fail closed and continue to normal storage lookup.
+    }
+  }
   const storage = getStorageDriver();
   if (storage instanceof R2StorageDriver) {
     // Redirect to a short-lived R2 URL: large PDFs and videos bypass the
