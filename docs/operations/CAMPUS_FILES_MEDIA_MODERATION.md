@@ -22,7 +22,7 @@ Set these variables in the deployment provider's encrypted environment settings 
 - `R2_PUBLIC_BASE_URL` (only needed for public buckets such as thumbnails/avatars; use a configured R2 custom domain or public bucket URL)
 - `R2_BUCKET_PREFIX` (optional; use only if every configured bucket has that prefix)
 
-Create private buckets matching the configured names (with the optional prefix applied): `message-attachments`, `watch-videos`, `reel-videos`, `story-media`, and `study-materials`. Public buckets are `avatars`, `post-media`, `community-images`, `event-images`, and `video-thumbnails`. Keep study materials and private video/attachment buckets private; deliver them through the app's authenticated file route. Apply least-privilege R2 credentials scoped to the required buckets.
+Create private buckets matching the configured names (with the optional prefix applied): `message-attachments`, `announcement-attachments`, `watch-videos`, `reel-videos`, `story-media`, and `study-materials`. Public buckets are `avatars`, `post-media`, `community-images`, `event-images`, and `video-thumbnails`. Keep study materials, announcement attachments, message attachments and private video buckets private; deliver them through the app's authenticated file route. Announcement attachment reads are checked against the announcement's audience and active time window, and responses are not stored in browser caches. Apply least-privilege R2 credentials scoped to the required buckets.
 
 The application now fails closed in production if the storage driver is not set to R2, instead of silently writing user files to ephemeral serverless disk. Local filesystem storage remains intended for local development and tests.
 
@@ -66,3 +66,12 @@ Study-material binaries live in private R2 object storage; MongoDB stores only s
 - Use small metadata pages (20–30 items), lazy-load previews, and fetch file bytes only when a student opens or downloads a resource.
 
 **Capacity boundary:** These changes reduce avoidable database round trips and keep file transfer off the app server, but they do not prove a 3,000-user capacity target. Before school-wide launch, run a realistic load test against the deployed Vercel + Atlas + R2 stack (including simultaneous sign-ins, library searches and file downloads), inspect Atlas connection/CPU/IOPS and Vercel function concurrency, and tune pool size and CDN behavior to the observed results. A file's download time still depends on its size and the student's network.
+
+
+## Announcement attachment privacy
+
+Announcement uploads use the dedicated private `announcement-attachments` bucket. The completion endpoint returns an app URL, not a public R2 URL. On each read, the server checks the authenticated viewer against the same audience and start/end-time filter used by the announcement listing. Do not make this bucket public or add it to `publicBuckets`.
+
+## Load testing
+
+A read-only k6 scenario is available at `tests/load/dyne.js`. Follow `tests/load/README.md` and run it only against staging with synthetic accounts. The default profile reaches 100 virtual users; the opt-in profile ramps to 3,300. A completed run is required before claiming that the 3,300-account capacity target is met. The scenario does not cover writes, realtime fan-out or large concurrent downloads, which require separate controlled tests.
