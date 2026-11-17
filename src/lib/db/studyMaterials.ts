@@ -138,6 +138,7 @@ export async function listStudyMaterials(
     featuredOnly?: boolean;
     limit?: number;
     before?: Date;
+    beforeId?: ObjectId;
     /** Teacher view: include this author's own pending materials. */
     includeOwnPending?: string | ObjectId;
     status?: string;
@@ -164,7 +165,13 @@ export async function listStudyMaterials(
   if (opts.semester) q.semester = opts.semester;
   if (opts.academicYear) q.academicYear = opts.academicYear;
   if (opts.featuredOnly) q.isFeatured = true;
-  if (opts.before) q.createdAt = { $lt: opts.before };
+  if (opts.before) {
+    const comparison = opts.sort === "oldest" ? "$gt" : "$lt";
+    q.$or = [
+      { createdAt: { [comparison]: opts.before } },
+      ...(opts.beforeId ? [{ createdAt: opts.before, _id: { [comparison]: opts.beforeId } }] : []),
+    ];
+  }
 
   const rows = await col<StudyMaterialDoc>(db, "studyMaterials")
     .find(q as never)
