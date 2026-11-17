@@ -24,7 +24,9 @@ jobs:
           node-version: 24
           cache: npm
       - name: Upgrade directly affected toolchain packages
-        run: npm install --save-exact next@16.4.6 eslint-config-next@16.4.6 vitest@5.1.0
+        run: |
+          npm install --save-exact next@16.4.6
+          npm install --save-dev --save-exact eslint-config-next@16.4.6 vitest@5.1.0 @types/node@24
       - name: Apply compatible transitive security updates
         run: npm audit fix
       - name: Require no high or critical advisories
