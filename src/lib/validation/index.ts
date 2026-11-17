@@ -70,7 +70,7 @@ export const profileUpdateSchema = z.object({
   profileTags: z.array(z.string().max(24)).max(8).optional(),
   coverImageUrl: z.string().url().max(2048).optional().or(z.literal("")),
   accent: z.string().max(30).optional(),
-});
+}).strict();
 
 export const postCreateSchema = z.object({
   content: z.string().max(5000, "Post content must be at most 5000 characters").optional(),
