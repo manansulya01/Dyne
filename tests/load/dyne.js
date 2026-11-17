@@ -49,8 +49,8 @@ export function setup() {
   if (!baseUrl) throw new Error("Set DYNE_BASE_URL to a staging/preview deployment URL.");
   const firstSession = sessionForVu(1);
   if (!firstSession) throw new Error("Set DYNE_SESSION_COOKIE or DYNE_SESSION_COOKIES_FILE.");
-  if (fullStress && sessionCookies.length < 3300) {
-    throw new Error("The 3,300-VU profile requires at least 3,300 distinct synthetic test-account sessions.");
+  if (fullStress && new Set(sessionCookies).size < 3300) {
+    throw new Error("The 3,300-VU profile requires at least 3,300 unique synthetic test-account sessions.");
   }
   const response = http.get(`${baseUrl}/api/health/db`, {
     headers: { Cookie: `dyne_session=${firstSession}` },
