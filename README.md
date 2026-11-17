@@ -58,6 +58,10 @@ Administrators can open **Admin console → CTO demo data → Load demo data** t
 
 Load the sample content before a presentation, then use Restore / remove demo data afterward. Refresh the Feed, Announcements, Study Materials, and Videos pages to see the sample content.
 
+## Instant study-material library opening
+
+The dashboard prefetches the first page of the signed-in user's study-material library in the background and warms a short-lived `sessionStorage` cache. The cache is scoped to the authenticated account (important on shared campus iPads), contains metadata and same-origin gated download paths rather than raw file bytes or public storage keys, and expires after 45 seconds. On repeat visits the page paints cached materials immediately and refreshes them in the background; search/filter changes are debounced and pagination remains cursor-based. This improves perceived opening time but does not promise zero latency or replace load testing.
+
 ## File-transfer performance
 
 - Study-material and announcement-attachment uploads use short-lived browser-to-R2 PUT URLs, followed by server-side metadata, ownership, and file-signature verification. The app server does not receive the file bytes.
