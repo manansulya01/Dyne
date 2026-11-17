@@ -10,7 +10,7 @@ import { mimeForKey } from "@/lib/storage/types";
 /**
  * Gated download: authenticated users only; pending, rejected, and removed materials
  * are hidden (404, no existence oracle). Raw storage paths are never exposed —
- * bytes stream through this route.
+ * R2 downloads redirect to short-lived signed URLs so file bytes bypass the app server.
  */
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
