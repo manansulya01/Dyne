@@ -204,6 +204,7 @@ function AnnouncementComposer({
   const [classGrade, setClassGrade] = useState("");
   const [isPinned, setIsPinned] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const [endsAt, setEndsAt] = useState("");
   const [publishNow, setPublishNow] = useState(true);
 
@@ -211,6 +212,40 @@ function AnnouncementComposer({
     e.preventDefault();
     setBusy(true);
     try {
+      let attachmentUrl: string | undefined;
+      if (attachmentFile) {
+        const presign = await fetch("/api/upload/presign-announcement", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileName: attachmentFile.name, mime: attachmentFile.type || "application/octet-stream", size: attachmentFile.size }),
+        });
+        const signed = await presign.json();
+        if (!presign.ok) throw new Error(signed.error ?? "Could not prepare attachment upload.");
+        if (signed.direct) {
+          const uploaded = await fetch(signed.uploadUrl, {
+            method: "PUT",
+            headers: { "Content-Type": signed.mime },
+            body: attachmentFile,
+          });
+          if (!uploaded.ok) throw new Error("Attachment upload failed. Check storage CORS and try again.");
+          const complete = await fetch("/api/upload/complete-announcement", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ bucket: signed.bucket, key: signed.key, fileName: signed.fileName, mime: signed.mime, size: signed.size }),
+          });
+          const completed = await complete.json();
+          if (!complete.ok) throw new Error(completed.error ?? "Could not verify attachment.");
+          attachmentUrl = completed.url;
+        } else {
+          const form = new FormData();
+          form.set("bucket", "post-media");
+          form.set("file", attachmentFile);
+          const uploaded = await fetch("/api/upload", { method: "POST", body: form });
+          const data = await uploaded.json();
+          if (!uploaded.ok) throw new Error(data.error ?? "Attachment upload failed.");
+          attachmentUrl = data.media?.url;
+        }
+      }
       const res = await fetch("/api/announcements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -223,6 +258,8 @@ function AnnouncementComposer({
           audienceClassGrade: classGrade || undefined,
           isPinned,
           linkUrl: linkUrl.trim() || undefined,
+          attachmentUrl,
+          attachmentName: attachmentFile?.name,
           endsAt: endsAt ? new Date(endsAt).toISOString() : undefined,
           publish: publishNow,
         }),
@@ -241,6 +278,7 @@ function AnnouncementComposer({
       setBody("");
       setCategory("");
       setLinkUrl("");
+      setAttachmentFile(null);
       setEndsAt("");
       setIsPinned(false);
       const message = data.heldForReview
@@ -368,6 +406,18 @@ function AnnouncementComposer({
                 className="mt-1 min-h-[44px]"
               />
             </div>
+          </div>
+          <div>
+            <label htmlFor="ann-attachment" className="text-sm font-medium">
+              Attachment (optional, up to 50 MB)
+            </label>
+            <input
+              id="ann-attachment"
+              type="file"
+              onChange={(e) => setAttachmentFile(e.target.files?.[0] ?? null)}
+              className="mt-1 block min-h-[44px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+            {attachmentFile && <p className="mt-1 text-xs text-muted-foreground">{attachmentFile.name} · {(attachmentFile.size / (1024 * 1024)).toFixed(1)} MB</p>}
           </div>
           <div>
             <label htmlFor="ann-ends" className="text-sm font-medium">
