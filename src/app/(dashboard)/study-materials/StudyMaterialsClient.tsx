@@ -104,7 +104,7 @@ export function StudyMaterialsClient({ cacheScope }: { cacheScope: string }) {
         } catch { /* Storage may be unavailable or full; the live response still renders. */ }
       }
     } catch (e) {
-      if (requestVersion === requestVersionRef.current) setError(e instanceof Error ? e.message : "Failed to load");
+      if (requestVersion === requestVersionRef.current && !hasWarmCacheRef.current) setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
       if (requestVersion === requestVersionRef.current) {
         setIsLoading(false);
