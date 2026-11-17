@@ -126,11 +126,14 @@ export function StudyMaterialsClient({ cacheScope }: { cacheScope: string }) {
     const cached = readMaterialsCache(cacheKey(cacheScope, p));
     if (cached) {
       hasWarmCacheRef.current = true;
-      setItems(cached.materials);
-      cursorRef.current = cached.cursor;
-      setHasMore(cached.hasMore);
-      setCanUpload(cached.canUpload);
-      setIsLoading(false);
+      // Defer cache hydration until after the effect to avoid blocking paint.
+      window.setTimeout(() => {
+        setItems(cached.materials);
+        cursorRef.current = cached.cursor;
+        setHasMore(cached.hasMore);
+        setCanUpload(cached.canUpload);
+        setIsLoading(false);
+      }, 0);
     } else {
       hasWarmCacheRef.current = false;
     }
