@@ -50,6 +50,11 @@ export async function createStudyMaterial(
 
   const now = new Date();
   const uploader = toObjectId(uploaderId);
+  // Storage keys are owner-scoped; never allow a teacher to publish another
+  // account's private object by guessing or reusing its key.
+  if (!input.key.startsWith(uploader.toHexString() + "/")) {
+    return { ok: false as const, reason: "bad_key" as const };
+  }
   const title = input.title.trim().slice(0, 200);
   const description = input.description?.trim().slice(0, 2000) || null;
 
@@ -127,7 +132,7 @@ export async function listStudyMaterials(
   opts: {
     search?: string;
     subject?: string;
-    classGrade?: string;
+    classGrade?: string | string[];
     materialType?: StudyMaterialDoc["materialType"];
     tag?: string;
     teacher?: string;
@@ -138,6 +143,7 @@ export async function listStudyMaterials(
     featuredOnly?: boolean;
     limit?: number;
     before?: Date;
+    beforeId?: ObjectId;
     /** Teacher view: include this author's own pending materials. */
     includeOwnPending?: string | ObjectId;
     status?: string;
@@ -154,18 +160,24 @@ export async function listStudyMaterials(
     q.status = "approved";
   }
   if (opts.search?.trim()) {
-    const rx = { $regex: opts.search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
-    q.$or = [{ title: rx }, { description: rx }, { subject: rx }];
+    q.$text = { $search: opts.search.trim().slice(0, 100) };
   }
-  if (opts.subject) q.subject = { $regex: `^${opts.subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" };
-  if (opts.classGrade) q.classGrade = { $regex: `^${opts.classGrade.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" };
+  if (opts.subject) q.subject = opts.subject.trim();
+  if (Array.isArray(opts.classGrade)) q.classGrade = { $in: opts.classGrade };
+  else if (opts.classGrade) q.classGrade = opts.classGrade.trim();
   if (opts.materialType) q.materialType = opts.materialType;
   if (opts.tag) q.tags = opts.tag.slice(0, 30);
   if (opts.teacher) q.teacher = opts.teacher;
   if (opts.semester) q.semester = opts.semester;
   if (opts.academicYear) q.academicYear = opts.academicYear;
   if (opts.featuredOnly) q.isFeatured = true;
-  if (opts.before) q.createdAt = { $lt: opts.before };
+  if (opts.before) {
+    const comparison = opts.sort === "oldest" ? "$gt" : "$lt";
+    q.$or = [
+      { createdAt: { [comparison]: opts.before } },
+      ...(opts.beforeId ? [{ createdAt: opts.before, _id: { [comparison]: opts.beforeId } }] : []),
+    ];
+  }
 
   const rows = await col<StudyMaterialDoc>(db, "studyMaterials")
     .find(q as never)

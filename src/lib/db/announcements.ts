@@ -238,7 +238,7 @@ export async function publishAnnouncement(
  * whole campus. Students never see staff-only announcements, and a targeted
  * announcement is only listed for its real audience.
  */
-async function audienceFilterForViewer(
+export async function announcementVisibilityFilterForViewer(
   db: Db,
   opts: { viewerRole?: string; viewerId?: string }
 ): Promise<Record<string, unknown> | null> {
@@ -269,8 +269,46 @@ async function audienceFilterForViewer(
     or.push({ audience: "selected", audienceIds: viewer });
     return { $or: or };
   }
-  // Staff (teacher/admin/moderator) see campus-wide plus teaching audiences.
-  return { audience: { $in: ["all", "students", "teachers", "staff", "selected"] } };
+  // Staff roles see the audiences appropriate to their role, but selected
+  // announcements are always checked against the explicit recipient list.
+  const staffRoles = new Set(["teacher", "staff", "moderator", "admin", "super_admin"]);
+  const memberships = await col(db, "communityMembers")
+    .find({ userId: viewer } as never)
+    .project({ communityId: 1 })
+    .limit(100)
+    .toArray();
+  const communityIds = memberships
+    .map((membership) => (membership as unknown as { communityId?: ObjectId }).communityId)
+    .filter((id): id is ObjectId => id instanceof ObjectId);
+
+  if (staffRoles.has(opts.viewerRole)) {
+    const allowedAudiences = opts.viewerRole === "teacher"
+      ? ["all", "students", "teachers"]
+      : ["all", "students", "teachers", "staff"];
+    const or: Record<string, unknown>[] = [
+      {
+        audience: { $in: allowedAudiences },
+        $or: [
+          { audienceCommunityId: null },
+          ...(communityIds.length ? [{ audienceCommunityId: { $in: communityIds } }] : []),
+        ],
+      },
+      { audience: "selected", audienceIds: viewer },
+    ];
+    return { $or: or };
+  }
+
+  // Club and other non-student accounts get campus-wide announcements,
+  // announcements explicitly addressed to them, and their own communities.
+  // Never expose grade-, teacher-, or staff-targeted announcements by default.
+  const or: Record<string, unknown>[] = [
+    { audience: "all", audienceClassGrade: null, audienceCommunityId: null },
+    { audience: "selected", audienceIds: viewer },
+  ];
+  if (communityIds.length) {
+    or.push({ audience: "all", audienceCommunityId: { $in: communityIds } });
+  }
+  return { $or: or };
 }
 
 export async function listAnnouncements(
@@ -292,7 +330,7 @@ export async function listAnnouncements(
     ],
   };
   if (opts.authoredBy) filter.createdBy = toObjectId(opts.authoredBy);
-  const audience = await audienceFilterForViewer(db, opts);
+  const audience = await announcementVisibilityFilterForViewer(db, opts);
   if (audience) filter.$and = [...(filter.$and as unknown[]), audience];
 
   const rows = await col<AnnouncementDoc>(db, "announcements")

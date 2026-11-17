@@ -58,6 +58,7 @@ export default async function AdminUsersPage({
     <AdminUsersClient
       currentRole={user.role}
       canAssignRoles={user.role === "super_admin"}
+      canManageGrades={hasPermission(user.role, "users.manage")}
       initialTotal={total}
       initialHasMore={rows.length === 25}
       initialUsers={rows.map((r, i) => ({

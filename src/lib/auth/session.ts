@@ -16,6 +16,8 @@ export interface SessionUser {
   displayName: string | null;
   avatarUrl: string | null;
   role: UserDoc["role"];
+  /** School-managed enrollment value; never editable through self-service profile APIs. */
+  classGrade: string | null;
 }
 
 function sha256Hex(raw: string): string {
@@ -74,6 +76,7 @@ export async function resolveUserByToken(db: Db, token: string): Promise<Session
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
     role: user.role,
+    classGrade: user.classGrade ?? null,
   };
 }
 

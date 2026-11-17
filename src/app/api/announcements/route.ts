@@ -80,6 +80,8 @@ export async function POST(request: Request) {
     audienceIds: (d as { audienceIds?: string[] }).audienceIds,
     audienceClassGrade: (d as { audienceClassGrade?: string }).audienceClassGrade ?? null,
     isPinned: d.isPinned,
+    attachmentUrl: d.attachmentUrl ?? null,
+    attachmentName: d.attachmentName ?? null,
     linkUrl: (d as { linkUrl?: string }).linkUrl ?? null,
     startsAt: d.startsAt ? new Date(d.startsAt) : null,
     endsAt: d.endsAt ? new Date(d.endsAt) : null,

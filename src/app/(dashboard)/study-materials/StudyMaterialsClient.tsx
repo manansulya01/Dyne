@@ -30,8 +30,25 @@ interface Material {
 }
 
 const TYPES = ["notes", "worksheet", "assignment", "question_paper", "revision", "reference", "presentation", "other"];
+const CACHE_TTL_MS = 45_000;
+interface MaterialsCache { savedAt: number; materials: Material[]; cursor: string | null; hasMore: boolean; canUpload: boolean; }
+function cacheKey(scope: string, params: URLSearchParams) {
+  return `dyne:study-materials:v1:${scope}:${params.toString()}`;
+}
+function readMaterialsCache(key: string): MaterialsCache | null {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as MaterialsCache;
+    if (!Array.isArray(value.materials) || Date.now() - value.savedAt > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return value;
+  } catch { return null; }
+}
 
-export function StudyMaterialsClient() {
+export function StudyMaterialsClient({ cacheScope }: { cacheScope: string }) {
   const [items, setItems] = useState<Material[]>([]);
   const [search, setSearch] = useState("");
   const [subject, setSubject] = useState("");
@@ -47,12 +64,16 @@ export function StudyMaterialsClient() {
   const [showUpload, setShowUpload] = useState(false);
   const [canUpload, setCanUpload] = useState(false);
   const cursorRef = useRef<string | null>(null);
+  const requestVersionRef = useRef(0);
+  const hasWarmCacheRef = useRef(false);
+  const firstLoadRef = useRef(true);
 
   const load = useCallback(async (append = false) => {
+    const requestVersion = ++requestVersionRef.current;
     if (append) {
       if (!cursorRef.current) return;
       setIsLoadingMore(true);
-    } else {
+    } else if (!hasWarmCacheRef.current) {
       setIsLoading(true);
     }
     setError(null);
@@ -69,6 +90,7 @@ export function StudyMaterialsClient() {
       if (append && cursorRef.current) p.set("cursor", cursorRef.current);
       const res = await fetch(`/api/study-materials?${p.toString()}`);
       const data = await res.json();
+      if (requestVersion !== requestVersionRef.current) return;
       if (!res.ok) throw new Error(data.error ?? "Failed to load");
       setCanUpload(data.canUpload === true);
       if (data.canUpload !== true) setShowUpload(false);
@@ -76,21 +98,56 @@ export function StudyMaterialsClient() {
       setItems((prev) => (append ? [...prev, ...list] : list));
       cursorRef.current = data.cursor ?? null;
       setHasMore(!!data.hasMore);
+      if (!append) {
+        try {
+          sessionStorage.setItem(cacheKey(cacheScope, p), JSON.stringify({ savedAt: Date.now(), materials: list, cursor: data.cursor ?? null, hasMore: !!data.hasMore, canUpload: data.canUpload === true } satisfies MaterialsCache));
+        } catch { /* Storage may be unavailable or full; the live response still renders. */ }
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load");
+      if (requestVersion === requestVersionRef.current && !hasWarmCacheRef.current) setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
-      setIsLoading(false);
-      setIsLoadingMore(false);
+      if (requestVersion === requestVersionRef.current) {
+        setIsLoading(false);
+        setIsLoadingMore(false);
+      }
     }
-  }, [search, subject, classGrade, materialType, teacher, sort]);
+  }, [search, subject, classGrade, materialType, teacher, sort, cacheScope]);
 
   useEffect(() => {
-    const t = setTimeout(() => void load(false), 250);
+    const p = new URLSearchParams();
+    if (search) p.set("search", search);
+    if (subject) p.set("subject", subject);
+    if (classGrade) p.set("classGrade", classGrade);
+    if (materialType) p.set("materialType", materialType);
+    if (teacher) p.set("teacher", teacher);
+    if (sort === "saved") p.set("saved", "true");
+    else p.set("sort", sort);
+    p.set("limit", "30");
+    const cached = readMaterialsCache(cacheKey(cacheScope, p));
+    if (cached) {
+      hasWarmCacheRef.current = true;
+      // Defer cache hydration until after the effect to avoid blocking paint.
+      window.setTimeout(() => {
+        setItems(cached.materials);
+        cursorRef.current = cached.cursor;
+        setHasMore(cached.hasMore);
+        setCanUpload(cached.canUpload);
+        setIsLoading(false);
+      }, 0);
+    } else {
+      hasWarmCacheRef.current = false;
+    }
+    if (firstLoadRef.current) {
+      firstLoadRef.current = false;
+      void load(false);
+      return;
+    }
+    const t = setTimeout(() => void load(false), 180);
     return () => clearTimeout(t);
-  }, [load]);
+  }, [load, cacheScope, search, subject, classGrade, materialType, teacher, sort]);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
+    <div className="mx-auto w-full max-w-6xl space-y-4 px-4 py-5 sm:px-6 sm:py-6 lg:px-8">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Study Materials</h1>
@@ -299,15 +356,49 @@ function UploadForm({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const fd = new FormData();
-      fd.set("file", file);
-      fd.set("bucket", "study-materials");
-      const up = await fetch("/api/upload", { method: "POST", body: fd });
-      const upJson = await up.json();
-      if (!up.ok) throw new Error(typeof upJson.error === "string" ? upJson.error : "Upload failed");
-      // /api/upload stages into pendingMedia for posts; study-materials uses the
-      // driver key/url directly. Re-upload through the study path requires the key.
-      const media = upJson.media as { bucket: string; key: string; url: string };
+      const mime = file.type || "application/octet-stream";
+      const presign = await fetch("/api/upload/presign-study-material", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, mime, size: file.size }),
+      });
+      const presignJson = await presign.json();
+      if (!presign.ok) throw new Error(typeof presignJson.error === "string" ? presignJson.error : "Could not prepare upload");
+
+      let media: { bucket: string; key: string; url: string };
+      if (presignJson.direct === true) {
+        // The file bytes go straight from the browser to Cloudflare R2. They
+        // never pass through a serverless function or consume its memory.
+        const put = await fetch(presignJson.uploadUrl as string, {
+          method: "PUT",
+          headers: { "Content-Type": mime },
+          body: file,
+        });
+        if (!put.ok) throw new Error("Direct upload failed. Please retry.");
+        const complete = await fetch("/api/upload/complete-study-material", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bucket: presignJson.bucket,
+            key: presignJson.key,
+            fileName: file.name,
+            mime,
+            size: file.size,
+          }),
+        });
+        const completed = await complete.json();
+        if (!complete.ok) throw new Error(typeof completed.error === "string" ? completed.error : "Could not verify uploaded file");
+        media = completed.media as { bucket: string; key: string; url: string };
+      } else {
+        // Local development keeps the existing server-mediated storage path.
+        const fd = new FormData();
+        fd.set("file", file);
+        fd.set("bucket", "study-materials");
+        const up = await fetch("/api/upload", { method: "POST", body: fd });
+        const upJson = await up.json();
+        if (!up.ok) throw new Error(typeof upJson.error === "string" ? upJson.error : "Upload failed");
+        media = upJson.media as { bucket: string; key: string; url: string };
+      }
       const res = await fetch("/api/study-materials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -325,7 +416,7 @@ function UploadForm({ onDone }: { onDone: () => void }) {
           bucket: "study-materials",
           key: media.key,
           url: media.url,
-          mime: file.type || "application/octet-stream",
+          mime,
           size: file.size,
           fileName: file.name,
         }),

@@ -2,6 +2,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -54,6 +55,12 @@ export class R2StorageDriver implements StorageDriver {
 
   async put(bucket: StorageBucket, key: string, bytes: Uint8Array, mime: string) {
     assertSafeKey(key);
+    // Validate public URL configuration before writing bytes. Otherwise a
+    // missing R2_PUBLIC_BASE_URL can make publicUrl() throw after a successful
+    // PutObject, leaving an orphaned object while the API reports a 500.
+    if (publicBuckets.has(bucket) && !this.publicBase) {
+      throw new Error("R2_PUBLIC_BASE_URL is required before uploading to a public bucket");
+    }
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucketName(bucket),
@@ -63,6 +70,39 @@ export class R2StorageDriver implements StorageDriver {
       })
     );
     return { url: this.publicUrl(bucket, key) };
+  }
+
+
+  /** Upload directly from the browser to R2, bypassing the app server for file bytes. */
+  async createUploadUrl(bucket: StorageBucket, key: string, mime: string, size: number, expiresInSeconds = 300) {
+    assertSafeKey(key);
+    return getSignedUrl(
+      this.client,
+      new PutObjectCommand({
+        Bucket: this.bucketName(bucket),
+        Key: key,
+        ContentType: mime,
+        ContentLength: size,
+      }),
+      { expiresIn: expiresInSeconds }
+    );
+  }
+
+  /** Verify the uploaded object and inspect only its first 512 bytes. */
+  async inspectUpload(bucket: StorageBucket, key: string) {
+    assertSafeKey(key);
+    const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucketName(bucket), Key: key }));
+    const out = await this.client.send(new GetObjectCommand({
+      Bucket: this.bucketName(bucket),
+      Key: key,
+      Range: "bytes=0-511",
+    }));
+    const prefix = out.Body ? new Uint8Array(await out.Body.transformToByteArray()) : new Uint8Array();
+    return {
+      size: head.ContentLength ?? 0,
+      mime: head.ContentType ?? "application/octet-stream",
+      prefix,
+    };
   }
 
   async get(bucket: StorageBucket, key: string) {
@@ -98,11 +138,20 @@ export class R2StorageDriver implements StorageDriver {
   }
 
   /** Short-lived signed URL for private objects (served via /api/files route). */
-  async signedUrl(bucket: StorageBucket, key: string, expiresInSeconds = 3600): Promise<string> {
+  async signedUrl(
+    bucket: StorageBucket,
+    key: string,
+    expiresInSeconds = 300,
+    responseContentDisposition?: string
+  ): Promise<string> {
     assertSafeKey(key);
     return getSignedUrl(
       this.client,
-      new GetObjectCommand({ Bucket: this.bucketName(bucket), Key: key }),
+      new GetObjectCommand({
+        Bucket: this.bucketName(bucket),
+        Key: key,
+        ...(responseContentDisposition ? { ResponseContentDisposition: responseContentDisposition } : {}),
+      }),
       { expiresIn: expiresInSeconds }
     );
   }

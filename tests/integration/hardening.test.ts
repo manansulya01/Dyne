@@ -157,7 +157,7 @@ describe("hardening: study materials + polls", () => {
   it("rejected materials stay hidden even when the removal flag is cleared", async () => {
     const db = await getDb();
     const u = await makeUser("h4_u");
-    const created = await createStudyMaterial(db, u, mat({ key: "u/h.pdf", url: "/api/files/study-materials/u/h.pdf" }));
+    const created = await createStudyMaterial(db, u, mat({ key: u.toHexString() + "/h.pdf", url: "/api/files/study-materials/" + u.toHexString() + "/h.pdf" }));
     if (!created.ok) throw new Error("setup failed");
     expect(await listStudyMaterials(db, {})).toHaveLength(1);
     // Simulate a legacy/inconsistent row: rejected but not flagged removed.

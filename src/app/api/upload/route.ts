@@ -32,8 +32,25 @@ const STAFF_BUCKETS: Partial<Record<string, Permission[]>> = {
 };
 
 export async function POST(request: Request) {
-  const db = await getDb();
-  await ensureIndexes(db);
+  // Database/configuration failures happen before storage is reached. Keep
+  // them distinguishable in server logs instead of returning an opaque
+  // framework-generated 500 with no safe diagnostic context.
+  let db;
+  try {
+    db = await getDb();
+    await ensureIndexes(db);
+  } catch (err) {
+    const cause = err instanceof Error ? err : undefined;
+    const coded = err && typeof err === "object" ? err as { name?: unknown; code?: unknown } : undefined;
+    console.error("[upload] database initialization failed", {
+      errorName: typeof coded?.name === "string" ? coded.name : cause?.name ?? "UnknownError",
+      errorCode: typeof coded?.code === "string" || typeof coded?.code === "number" ? coded.code : undefined,
+    });
+    return NextResponse.json(
+      { error: "Upload service is temporarily unavailable. Please try again." },
+      { status: 503 }
+    );
+  }
 
   let user;
   try {
@@ -94,9 +111,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: sniffError }, { status: 400 });
   }
 
+  let storage: ReturnType<typeof getStorageDriver>;
+  let storedObject: { url: string };
   try {
-    await getStorageDriver().put(bucket, key, bytes, checked.mime);
-  } catch {
+    // Driver construction can fail when production storage environment is
+    // missing or malformed; keep that failure inside the same safe boundary.
+    storage = getStorageDriver();
+    storedObject = await storage.put(bucket, key, bytes, checked.mime);
+  } catch (err) {
+    // Keep the client response generic, but retain safe diagnostics in the
+    // server log so production storage failures can be distinguished from
+    // request validation and database failures. Never log credentials, file
+    // contents, cookies, or the original request.
+    const cause = err instanceof Error ? err : undefined;
+    const coded = err && typeof err === "object" ? err as { name?: unknown; $metadata?: { httpStatusCode?: unknown }; Code?: unknown; code?: unknown } : undefined;
+    console.error("[upload] storage write failed", {
+      bucket,
+      errorName: typeof coded?.name === "string" ? coded.name : cause?.name ?? "UnknownError",
+      storageCode: typeof coded?.Code === "string" ? coded.Code : typeof coded?.code === "string" ? coded.code : undefined,
+      statusCode: typeof coded?.$metadata?.httpStatusCode === "number" ? coded.$metadata.httpStatusCode : undefined,
+    });
     return NextResponse.json({ error: "Upload failed. Please try again." }, { status: 500 });
   }
 
@@ -107,21 +141,46 @@ export async function POST(request: Request) {
     : checked.mime.startsWith("image/")
       ? "image"
       : "file";
-  const url = getStorageDriver().publicUrl(bucket, key);
-  const stored = await col<PendingMediaDoc>(db, "pendingMedia").insertOne({
-    uploaderId: toObjectId(user.id),
-    bucket,
-    key,
-    url,
-    mediaType,
-    thumbnailUrl: mediaType === "video" ? url : null,
-    mime: checked.mime,
-    originalName: file.name.slice(0, 200),
-    size: file.size,
-    createdAt: new Date(),
-  } as never);
+  const url = storedObject.url;
+  let storedId: string;
+  try {
+    const stored = await col<PendingMediaDoc>(db, "pendingMedia").insertOne({
+      uploaderId: toObjectId(user.id),
+      bucket,
+      key,
+      url,
+      mediaType,
+      thumbnailUrl: mediaType === "video" ? url : null,
+      mime: checked.mime,
+      originalName: file.name.slice(0, 200),
+      size: file.size,
+      createdAt: new Date(),
+    } as never);
+    storedId = stored.insertedId.toHexString();
+  } catch (err) {
+    const cause = err instanceof Error ? err : undefined;
+    console.error("[upload] metadata persistence failed", {
+      bucket,
+      errorName: cause?.name ?? "UnknownError",
+    });
+    // The object is not useful until its pending-media row exists. Attempt
+    // to roll it back so transient database errors do not leak stored files.
+    try {
+      await storage.delete(bucket, key);
+    } catch (cleanupErr) {
+      const cleanupCause = cleanupErr instanceof Error ? cleanupErr : undefined;
+      console.error("[upload] orphan cleanup failed", {
+        bucket,
+        errorName: cleanupCause?.name ?? "UnknownError",
+      });
+    }
+    return NextResponse.json(
+      { error: "Upload service is temporarily unavailable. Please try again." },
+      { status: 503 }
+    );
+  }
 
-  const hex = stored.insertedId.toHexString();
+  const hex = storedId;
   return NextResponse.json({
     media: {
       id: hex,

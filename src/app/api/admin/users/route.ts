@@ -8,6 +8,7 @@ import { toProfileJSON } from "@/lib/db/contracts";
 import { logAudit } from "@/lib/security/audit";
 import { jsonError, withAnyPermission } from "@/lib/security/authorize";
 import { parseLimitParam } from "@/lib/utils";
+import { hasPermission } from "@/lib/permissions";
 /**
  * Admin user directory.
  *
@@ -108,6 +109,7 @@ export async function GET(request: Request) {
     password_fields_exposed: false,
     // Only a super-admin may grant/revoke admin or super_admin.
     canAssignRoles: user.role === "super_admin",
+    canManageGrades: hasPermission(user.role, "users.manage"),
   });
 }
 /** Assign a role. Server-side only; client-supplied roles are never trusted. */

@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import { NextRequest } from "next/server";
-import { getDb } from "@/lib/mongo/client";
-import { ensureIndexes } from "@/lib/mongo/collections";
 import { studyMaterialCreateSchema, STUDY_MATERIAL_TYPES } from "@/lib/validation";
 import { createStudyMaterial, listStudyMaterials } from "@/lib/db/studyMaterials";
 import { toStudyMaterialJSON } from "@/lib/db/contracts";
 import { parseLimitParam } from "@/lib/utils";
+import { objectIdSchema, toObjectId } from "@/lib/mongo/ids";
 import { guardRate, jsonError, withAnyPermission, withUser } from "@/lib/security/authorize";
 import { canUploadStudyMaterials } from "@/lib/permissions";
 import type { StudyMaterialType } from "@/lib/mongo/collections";
@@ -19,12 +18,10 @@ import type { StudyMaterialType } from "@/lib/mongo/collections";
  */
 
 export async function POST(request: NextRequest) {
-  const db = await getDb();
-  await ensureIndexes(db);
   // Only teachers/admins publish study materials (students cannot).
   const auth = await withAnyPermission(["study.upload", "study.manage"]);
   if (!auth.ok) return auth.response;
-  const { user } = auth.ctx;
+  const { db, user } = auth.ctx;
   if (!canUploadStudyMaterials(user.role)) {
     return jsonError(403, "Only teachers can upload study materials");
   }
@@ -71,15 +68,28 @@ export async function GET(request: NextRequest) {
   const featuredOnly = searchParams.get("featured") === "true";
   const cursor = searchParams.get("cursor");
   let before: Date | undefined;
+  let beforeId: import("mongodb").ObjectId | undefined;
   if (cursor) {
-    const p = new Date(cursor);
-    if (!isNaN(+p)) before = p;
+    const [datePart, idPart] = cursor.split("|", 2);
+    const parsedDate = new Date(datePart);
+    if (Number.isFinite(parsedDate.getTime())) before = parsedDate;
+    if (idPart && objectIdSchema.safeParse(idPart).success) beforeId = toObjectId(idPart);
   }
 
+  // Students can browse only their enrolled grade. Ignore the client filter
+  // for students so a modified request cannot expose another class's files.
+  let effectiveClassGrade: string | string[] | undefined = classGrade;
+  if (!["teacher", "staff", "moderator", "admin", "super_admin"].includes(user.role)) {
+    const enrolledGrade = user.classGrade?.trim() ?? "";
+    const gradeNumber = enrolledGrade.match(/\d{1,2}/)?.[0];
+    effectiveClassGrade = enrolledGrade
+      ? [...new Set([enrolledGrade, ...(gradeNumber ? [gradeNumber, "Grade " + gradeNumber] : [])])]
+      : "__unassigned__";
+  }
   const items = await listStudyMaterials(db, {
     search,
     subject,
-    classGrade,
+    classGrade: effectiveClassGrade,
     materialType:
       materialType && (STUDY_MATERIAL_TYPES as readonly string[]).includes(materialType)
         ? (materialType as StudyMaterialType)
@@ -92,15 +102,19 @@ export async function GET(request: NextRequest) {
     includeOwnPending: mine ? user.id : undefined,
     sort,
     featuredOnly,
-    limit,
+    limit: limit + 1,
     before,
+    beforeId,
   });
+  // Fetch one extra row to determine hasMore without an empty follow-up request.
+  const hasMore = items.length > limit;
+  const page = items.slice(0, limit);
   // Stable snake_case contract (download URLs gated server-side).
-  const mapped = items.map((m) => toStudyMaterialJSON(m as unknown as Record<string, unknown>));
+  const mapped = page.map((m) => toStudyMaterialJSON(m as unknown as Record<string, unknown>));
   return NextResponse.json({
     materials: mapped,
-    cursor: mapped.length ? mapped[mapped.length - 1].created_at : null,
-    hasMore: mapped.length === limit,
+    cursor: mapped.length ? mapped[mapped.length - 1].created_at + "|" + mapped[mapped.length - 1].id : null,
+    hasMore,
     canUpload: canUploadStudyMaterials(user.role),
   });
 }

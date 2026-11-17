@@ -16,11 +16,15 @@ declare global {
 
 function createClientPromise(): Promise<MongoClient> {
   const { uri } = getMongoEnv();
+  const configuredPoolSize = Number(process.env.MONGODB_MAX_POOL_SIZE ?? 20);
+  const maxPoolSize = Number.isInteger(configuredPoolSize)
+    ? Math.min(50, Math.max(5, configuredPoolSize))
+    : 20;
   const client = new MongoClient(uri, {
-    maxPoolSize: 10,
-    // Bounded so an unreachable database fails fast instead of hanging the
-    // request (verified: with a paused mongod the API stopped responding
-    // rather than returning a prompt error).
+    maxPoolSize,
+    minPoolSize: 0,
+    maxConnecting: 5,
+    maxIdleTimeMS: 60_000,
     serverSelectionTimeoutMS: 5000,
     connectTimeoutMS: 5000,
     socketTimeoutMS: 20000,
@@ -55,20 +59,10 @@ export function getMongoClient(): Promise<MongoClient> {
 
 export async function getDb(): Promise<Db> {
   const { dbName } = getMongoEnv();
-  let client: MongoClient;
-  try {
-    client = await getMongoClient();
-  } catch (err) {
-    throw toActionableMongoError(err);
-  }
-  try {
-    // Harmless read-only check that surfaces an unreachable server here
-    // (with an actionable message) instead of midway through a query.
-    await client.db(dbName).command({ ping: 1 });
-  } catch (err) {
-    globalThis.__dyneMongoClient = undefined;
-    throw toActionableMongoError(err);
-  }
+  const client = await getMongoClient();
+  // Do not issue a ping on every request. The cached client is already
+  // connected; each real query naturally detects a dropped connection. This
+  // saves one MongoDB round trip per API request under high concurrency.
   return client.db(dbName);
 }
 
@@ -99,7 +93,7 @@ export function toActionableMongoError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
-/** Test helper: reset the cached client (used by the test harness only). */
+/** Test helper: reset the cached client (used when databases are dropped between tests). */
 export function __resetMongoClientForTests(): void {
   globalThis.__dyneMongoClient = undefined;
 }

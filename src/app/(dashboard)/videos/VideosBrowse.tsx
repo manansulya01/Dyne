@@ -124,13 +124,18 @@ export function VideosBrowse({
             in <Link href="/reels" className="font-medium text-primary hover:underline">Reels</Link>.
           </p>
         </div>
-        {canUpload && (
-          <Button asChild size="sm" className="min-h-[44px]">
-            <Link href="/videos/upload">
-              <Upload className="h-4 w-4" aria-hidden="true" /> Upload
-            </Link>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild size="sm" variant="outline" className="min-h-[44px]">
+            <Link href="/videos/youtube">YouTube Library</Link>
           </Button>
-        )}
+          {canUpload && (
+            <Button asChild size="sm" className="min-h-[44px]">
+              <Link href="/videos/upload">
+                <Upload className="h-4 w-4" aria-hidden="true" /> Upload
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
 
       {categories.length > 0 && (

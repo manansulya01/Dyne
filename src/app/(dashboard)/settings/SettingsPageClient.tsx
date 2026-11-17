@@ -30,7 +30,6 @@ export function SettingsPageClient({ profile, email }: {
   const router = useRouter();
   const [displayName, setDisplayName] = useState(profile?.display_name ?? "");
   const [bio, setBio] = useState(profile?.bio ?? "");
-  const [classGrade, setClassGrade] = useState(profile?.class_grade ?? "");
   const [house, setHouse] = useState(profile?.house ?? "");
   const [interests, setInterests] = useState((profile?.interests ?? []).join(", "));
   const [tags, setTags] = useState<string[]>(profile?.profile_tags ?? []);
@@ -77,7 +76,6 @@ export function SettingsPageClient({ profile, email }: {
         body: JSON.stringify({
           displayName: displayName.trim() || undefined,
           bio: bio.trim() || undefined,
-          classGrade: classGrade.trim() || undefined,
           house: house.trim() || undefined,
           interests: interests.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 10),
           profileTags: tags,
@@ -207,8 +205,9 @@ export function SettingsPageClient({ profile, email }: {
             </div>
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
-                <label htmlFor="class-grade" className="text-sm font-medium">Class / Grade</label>
-                <Input id="class-grade" value={classGrade} onChange={(e) => setClassGrade(e.target.value)} maxLength={50} className="min-h-[44px]" />
+                <label htmlFor="class-grade" className="text-sm font-medium">Enrolled class / grade</label>
+                <Input id="class-grade" value={profile?.class_grade ?? ""} readOnly disabled className="min-h-[44px]" />
+                <p className="mt-1 text-xs text-muted-foreground">Your enrolled grade is managed by school administration.</p>
               </div>
               <div>
                 <label htmlFor="house" className="text-sm font-medium">House</label>

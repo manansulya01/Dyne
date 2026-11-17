@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/secure-campus-media-moderation]
   pull_request:
     branches: [main]
 
@@ -20,27 +20,25 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-
       - name: Install dependencies
         run: npm ci
-
+      - name: Report dependency vulnerabilities
+        run: |
+          npm audit --json > /tmp/dyne-npm-audit.json || true
+          node -e 'const a=require("/tmp/dyne-npm-audit.json"); const v=a.vulnerabilities||{}; console.log(JSON.stringify({summary:a.metadata?.vulnerabilities||{}, findings:Object.entries(v).map(([name,item])=>({name,severity:item.severity,range:item.range,fixAvailable:item.fixAvailable,via:(item.via||[]).map(x=>typeof x==="string"?x:{title:x.title,url:x.url,range:x.range})}))},null,2))'
       - name: Type-check
         run: npx tsc --noEmit
-
       - name: Lint
         run: npm run lint
-
       - name: Test
         run: npm test -- --run
         env:
           AUTH_SECRET: ci-only-not-for-deployment-01234567890123456789
-
       - name: Production build
         run: npm run build
         env:

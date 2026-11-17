@@ -101,7 +101,6 @@ export interface UpdateProfileInput {
   avatarUrl?: string | null;
   coverImageUrl?: string | null;
   accent?: string | null;
-  classGrade?: string | null;
   house?: string | null;
   interests?: string[];
   profileTags?: string[];
@@ -115,7 +114,6 @@ export async function updateOwnProfile(db: Db, userId: string | ObjectId, input:
   if (input.avatarUrl !== undefined) patch.avatarUrl = input.avatarUrl;
   if (input.coverImageUrl !== undefined) patch.coverImageUrl = input.coverImageUrl || null;
   if (input.accent !== undefined) patch.accent = input.accent || null;
-  if (input.classGrade !== undefined) patch.classGrade = input.classGrade;
   if (input.house !== undefined) patch.house = input.house;
   if (input.interests !== undefined) patch.interests = input.interests.slice(0, 10);
   if (input.profileTags !== undefined) patch.profileTags = sanitizeProfileTags(input.profileTags);

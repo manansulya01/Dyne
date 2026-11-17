@@ -531,6 +531,27 @@ export interface StoryViewDoc extends Document {
   createdAt: Date;
 }
 
+export interface YouTubeSuggestionDoc extends Document {
+  _id: ObjectId;
+  videoId: string;
+  url: string;
+  title: string;
+  description: string | null;
+  thumbnailUrl: string | null;
+  channelTitle: string | null;
+  duration: string | null;
+  suggestedBy: ObjectId;
+  suggestedByRole: UserRole;
+  suggestionNote: string | null;
+  status: "pending" | "approved" | "rejected";
+  targetGrades: string[];
+  reviewReason: string | null;
+  reviewedBy: ObjectId | null;
+  reviewedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface VideoViewDoc extends Document {
   _id: ObjectId;
   videoId: ObjectId;
@@ -1054,6 +1075,7 @@ export const collectionNames = [
   "buildings",
   "clubs",
   "videos",
+  "youtubeSuggestions",
   "videoViews",
   "reels",
   "reelViews",
@@ -1215,6 +1237,10 @@ async function createAllIndexes(db: Db): Promise<void> {
   idx("videos", { category: 1 });
   // Feed queries filter on moderation status then sort by time.
   idx("videos", { moderationStatus: 1, createdAt: -1 });
+  idx("youtubeSuggestions", { status: 1, createdAt: -1, _id: -1 });
+  idx("youtubeSuggestions", { suggestedBy: 1, createdAt: -1 });
+  idx("youtubeSuggestions", { videoId: 1 }, { unique: true });
+  idx("youtubeSuggestions", { status: 1, targetGrades: 1, createdAt: -1 });
   // Reaction lookups for video/reel like counts and toggles.
   idx("reactions", { targetType: 1, targetId: 1, userId: 1 });
 
@@ -1302,9 +1328,10 @@ async function createAllIndexes(db: Db): Promise<void> {
   idx("feedback", { category: 1 });
 
   idx("studyMaterials", { subject: 1, classGrade: 1 });
-  idx("studyMaterials", { uploaderId: 1 });
-  idx("studyMaterials", { createdAt: -1 });
-  idx("studyMaterials", { status: 1 });
+  idx("studyMaterials", { uploaderId: 1, createdAt: -1 });
+  idx("studyMaterials", { status: 1, classGrade: 1, createdAt: -1, _id: -1 });
+  idx("studyMaterials", { status: 1, subject: 1, classGrade: 1, createdAt: -1, _id: -1 });
+  jobs.push(db.collection("studyMaterials").createIndex({ title: "text", description: "text", subject: "text", tags: "text" }));
 
   idx("savedStudyMaterials", { userId: 1, createdAt: -1 });
   idx("savedStudyMaterials", { userId: 1, materialId: 1 }, { unique: true });

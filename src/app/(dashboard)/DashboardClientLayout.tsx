@@ -100,6 +100,7 @@ function isActive(pathname: string, href: string) {
 
 export function DashboardClientLayout({ profile, children }: DashboardClientLayoutProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Hydration-safe: SSR and the first client render both use `false` so the
@@ -118,6 +119,44 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
       }
     } catch { /* private mode — leave expanded */ }
   }, []);
+
+  useEffect(() => {
+    if (!profile?.id || pathname.startsWith("/study-materials")) return;
+    // Warm the first study-material page while the user is browsing elsewhere.
+    // The cache key is account-scoped so a shared iPad cannot reuse another
+    // student's grade-filtered library.
+    router.prefetch("/study-materials");
+    const warmKey = `dyne:study-materials:v1:${profile.id}:sort=newest&limit=30`;
+    try {
+      const existing = sessionStorage.getItem(warmKey);
+      if (existing) {
+        const parsed = JSON.parse(existing) as { savedAt?: number };
+        if (typeof parsed.savedAt === "number" && Date.now() - parsed.savedAt < 45_000) return;
+      }
+    } catch { /* Continue with a fresh warm request if the cache is unreadable. */ }
+    const timer = window.setTimeout(() => {
+      void fetch("/api/study-materials?sort=newest&limit=30", { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) return;
+          const data = await response.json();
+          if (!Array.isArray(data.materials)) return;
+          try {
+            sessionStorage.setItem(
+              warmKey,
+              JSON.stringify({
+                savedAt: Date.now(),
+                materials: data.materials,
+                cursor: data.cursor ?? null,
+                hasMore: Boolean(data.hasMore),
+                canUpload: data.canUpload === true,
+              }),
+            );
+          } catch { /* Cache is an optimization; never block navigation. */ }
+        })
+        .catch(() => undefined);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [profile?.id, pathname, router]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
