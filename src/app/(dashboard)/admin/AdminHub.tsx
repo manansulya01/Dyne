@@ -19,6 +19,8 @@ import {
   ShieldCheck,
   Users,
   ScrollText,
+  Database,
+  RotateCcw,
 } from "lucide-react";
 
 /**
@@ -64,6 +66,9 @@ export function AdminHub({
   const [roleBreakdown, setRoleBreakdown] = useState<Array<{ _id: string; count: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [demoActive, setDemoActive] = useState(false);
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoMessage, setDemoMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +95,34 @@ export function AdminHub({
   }, []);
 
   const can = (permission: string) => permissions.includes(permission);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/admin/demo-data").then((r) => r.json()).then((data) => {
+      if (!cancelled) setDemoActive(Boolean(data.active));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  const runDemoAction = async (restore: boolean) => {
+    const prompt = restore
+      ? "Remove all Dyne demo content? Real posts, announcements, files, and videos will not be touched."
+      : "Add sample Dyne content for the CTO demonstration? This will not create login accounts or change real records.";
+    if (!window.confirm(prompt)) return;
+    setDemoBusy(true);
+    setDemoMessage(null);
+    try {
+      const response = await fetch("/api/admin/demo-data", { method: restore ? "DELETE" : "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Demo data action failed.");
+      setDemoActive(!restore);
+      setDemoMessage(restore ? `Demo data removed (${data.removed ?? 0} records).` : "Demo data added. Refresh the Feed, Announcements, Study Materials, and Videos pages to see it.");
+    } catch (err) {
+      setDemoMessage(err instanceof Error ? err.message : "Demo data action failed.");
+    } finally {
+      setDemoBusy(false);
+    }
+  };
 
   const sections = [
     { label: "Users", href: "/admin/users", icon: Users, permission: "users.manage", value: stats?.users },
@@ -191,6 +224,21 @@ export function AdminHub({
               </CardContent>
             </Card>
           )}
+
+          <Card>
+            <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 font-semibold"><Database className="h-4 w-4 text-primary" /> CTO demo data</div>
+                <p className="mt-1 text-sm text-muted-foreground">Add realistic sample posts, announcements, study materials, and a curated video. Demo records are tagged and can be removed without touching real school data. No demo login accounts are created.</p>
+                {demoMessage && <p role="status" className="mt-2 text-sm">{demoMessage}</p>}
+              </div>
+              {demoActive ? (
+                <Button variant="outline" disabled={demoBusy} onClick={() => runDemoAction(true)} className="min-h-[44px] shrink-0"><RotateCcw className="h-4 w-4" /> {demoBusy ? "Restoring…" : "Restore / remove demo data"}</Button>
+              ) : (
+                <Button disabled={demoBusy} onClick={() => runDemoAction(false)} className="min-h-[44px] shrink-0"><Database className="h-4 w-4" /> {demoBusy ? "Preparing…" : "Load demo data"}</Button>
+              )}
+            </CardContent>
+          </Card>
 
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline" className="min-h-[44px]">
