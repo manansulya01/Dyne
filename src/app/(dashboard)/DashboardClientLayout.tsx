@@ -100,6 +100,7 @@ function isActive(pathname: string, href: string) {
 
 export function DashboardClientLayout({ profile, children }: DashboardClientLayoutProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Hydration-safe: SSR and the first client render both use `false` so the
