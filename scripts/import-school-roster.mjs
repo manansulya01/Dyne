@@ -241,10 +241,29 @@ try {
       if (error?.code !== 11000 && !Array.isArray(error?.writeErrors)) throw error;
     }
     const created = await users.find({
-      username: { $in: batch.map((row) => row.username) },
-    }, { projection: { username: 1 } }).toArray();
-    const createdNames = new Set(created.map((user) => user.username));
-    for (const row of batch) row.status = createdNames.has(row.username) ? "created" : "not_created";
+      $or: [
+        { username: { $in: batch.map((row) => row.username) } },
+        { email: { $in: batch.map((row) => row.email) } },
+      ],
+    }, { projection: { _id: 1, username: 1, email: 1, passwordHash: 1 } }).toArray();
+    const createdByUsername = new Map(created.map((user) => [user.username, user]));
+    const successfullyCreated = [];
+    for (const row of batch) {
+      const user = createdByUsername.get(row.username);
+      const matchesThisImport = user?.email === row.email && user?.passwordHash === row.passwordHash;
+      row.status = matchesThisImport ? "created" : "not_created";
+      if (matchesThisImport) successfullyCreated.push({ row, user });
+    }
+    if (successfullyCreated.length) {
+      await db.collection("auditLogs").insertMany(successfullyCreated.map(({ row, user }) => ({
+        actorId: null,
+        action: "roster.user.provision",
+        targetType: "user",
+        targetId: user._id,
+        details: { source: "school_roster_import", role: row.role, classGrade: row.classGrade },
+        createdAt: new Date(),
+      })));
+    }
     await writeCredentials(outputPath, prepared);
   }
 
