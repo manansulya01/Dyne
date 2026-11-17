@@ -95,7 +95,7 @@ describe("study materials", () => {
   it("uploads, lists, filters, and moderates materials", async () => {
     const db = await getDb();
     const u = await makeUser("sm_u1");
-    const c = await createStudyMaterial(db, u, mat());
+    const c = await createStudyMaterial(db, u, mat({ key: u.toHexString() + "/abc123.pdf", url: "/api/files/study-materials/" + u.toHexString() + "/abc123.pdf" }));
     if (!c.ok) throw new Error("setup failed");
     expect(await listStudyMaterials(db, { subject: "Physics" })).toHaveLength(1);
     expect(await listStudyMaterials(db, { subject: "Chemistry" })).toHaveLength(0);
@@ -132,12 +132,12 @@ describe("study materials", () => {
     const v = await makeUser("sm_u5");
     const a = await createStudyMaterial(db, u, mat({
       title: "Algebra Basics", subject: "Math", teacher: "Ms Rao",
-      semester: "Sem 1", academicYear: "2026-27", key: "u/a.pdf",
-      url: "/api/files/study-materials/u/a.pdf",
+      semester: "Sem 1", academicYear: "2026-27", key: u.toHexString() + "/a.pdf",
+      url: "/api/files/study-materials/" + u.toHexString() + "/a.pdf",
     }));
     const b = await createStudyMaterial(db, u, mat({
       title: "Geometry Proofs", subject: "Math", teacher: "Mr Iyer",
-      key: "u/b.pdf", url: "/api/files/study-materials/u/b.pdf",
+      key: u.toHexString() + "/b.pdf", url: "/api/files/study-materials/" + u.toHexString() + "/b.pdf",
     }));
     if (!a.ok || !b.ok) throw new Error("setup failed");
     expect(await listStudyMaterials(db, { teacher: "Ms Rao" })).toHaveLength(1);
