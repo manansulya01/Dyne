@@ -30,8 +30,25 @@ interface Material {
 }
 
 const TYPES = ["notes", "worksheet", "assignment", "question_paper", "revision", "reference", "presentation", "other"];
+const CACHE_TTL_MS = 45_000;
+interface MaterialsCache { savedAt: number; materials: Material[]; cursor: string | null; hasMore: boolean; canUpload: boolean; }
+function cacheKey(scope: string, params: URLSearchParams) {
+  return `dyne:study-materials:v1:${scope}:${params.toString()}`;
+}
+function readMaterialsCache(key: string): MaterialsCache | null {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as MaterialsCache;
+    if (!Array.isArray(value.materials) || Date.now() - value.savedAt > CACHE_TTL_MS) {
+      sessionStorage.removeItem(key);
+      return null;
+    }
+    return value;
+  } catch { return null; }
+}
 
-export function StudyMaterialsClient() {
+export function StudyMaterialsClient({ cacheScope }: { cacheScope: string }) {
   const [items, setItems] = useState<Material[]>([]);
   const [search, setSearch] = useState("");
   const [subject, setSubject] = useState("");
@@ -47,12 +64,16 @@ export function StudyMaterialsClient() {
   const [showUpload, setShowUpload] = useState(false);
   const [canUpload, setCanUpload] = useState(false);
   const cursorRef = useRef<string | null>(null);
+  const requestVersionRef = useRef(0);
+  const hasWarmCacheRef = useRef(false);
+  const firstLoadRef = useRef(true);
 
   const load = useCallback(async (append = false) => {
+    const requestVersion = ++requestVersionRef.current;
     if (append) {
       if (!cursorRef.current) return;
       setIsLoadingMore(true);
-    } else {
+    } else if (!hasWarmCacheRef.current) {
       setIsLoading(true);
     }
     setError(null);
@@ -69,6 +90,7 @@ export function StudyMaterialsClient() {
       if (append && cursorRef.current) p.set("cursor", cursorRef.current);
       const res = await fetch(`/api/study-materials?${p.toString()}`);
       const data = await res.json();
+      if (requestVersion !== requestVersionRef.current) return;
       if (!res.ok) throw new Error(data.error ?? "Failed to load");
       setCanUpload(data.canUpload === true);
       if (data.canUpload !== true) setShowUpload(false);
@@ -76,18 +98,50 @@ export function StudyMaterialsClient() {
       setItems((prev) => (append ? [...prev, ...list] : list));
       cursorRef.current = data.cursor ?? null;
       setHasMore(!!data.hasMore);
+      if (!append) {
+        try {
+          sessionStorage.setItem(cacheKey(cacheScope, p), JSON.stringify({ savedAt: Date.now(), materials: list, cursor: data.cursor ?? null, hasMore: !!data.hasMore, canUpload: data.canUpload === true } satisfies MaterialsCache));
+        } catch { /* Storage may be unavailable or full; the live response still renders. */ }
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load");
+      if (requestVersion === requestVersionRef.current) setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
-      setIsLoading(false);
-      setIsLoadingMore(false);
+      if (requestVersion === requestVersionRef.current) {
+        setIsLoading(false);
+        setIsLoadingMore(false);
+      }
     }
-  }, [search, subject, classGrade, materialType, teacher, sort]);
+  }, [search, subject, classGrade, materialType, teacher, sort, cacheScope]);
 
   useEffect(() => {
-    const t = setTimeout(() => void load(false), 250);
+    const p = new URLSearchParams();
+    if (search) p.set("search", search);
+    if (subject) p.set("subject", subject);
+    if (classGrade) p.set("classGrade", classGrade);
+    if (materialType) p.set("materialType", materialType);
+    if (teacher) p.set("teacher", teacher);
+    if (sort === "saved") p.set("saved", "true");
+    else p.set("sort", sort);
+    p.set("limit", "30");
+    const cached = readMaterialsCache(cacheKey(cacheScope, p));
+    if (cached) {
+      hasWarmCacheRef.current = true;
+      setItems(cached.materials);
+      cursorRef.current = cached.cursor;
+      setHasMore(cached.hasMore);
+      setCanUpload(cached.canUpload);
+      setIsLoading(false);
+    } else {
+      hasWarmCacheRef.current = false;
+    }
+    if (firstLoadRef.current) {
+      firstLoadRef.current = false;
+      void load(false);
+      return;
+    }
+    const t = setTimeout(() => void load(false), 180);
     return () => clearTimeout(t);
-  }, [load]);
+  }, [load, cacheScope, search, subject, classGrade, materialType, teacher, sort]);
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-4 px-4 py-5 sm:px-6 sm:py-6 lg:px-8">
