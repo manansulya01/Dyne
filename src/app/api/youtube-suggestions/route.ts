@@ -3,6 +3,7 @@ import { z } from "zod";
 import { col, type YouTubeSuggestionDoc } from "@/lib/mongo/collections";
 import { withUser, guardRate } from "@/lib/security/authorize";
 import { toObjectId } from "@/lib/mongo/ids";
+import { gradeTargetLabels } from "@/lib/auth/enrollment";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,27 +28,6 @@ const createSchema = z.object({
 });
 
 const YOUTUBE_API = "https://www.googleapis.com/youtube/v3/videos";
-
-/** Produce equivalent labels without collapsing a section into its grade. */
-function equivalentGradeLabels(value: string): string[] {
-  const normalized = value.trim().toLowerCase().replace(/^(?:grade|class)\s*/i, "").replace(/\s+/g, "");
-  if (!normalized) return [];
-  const labels = new Set([value.trim(), normalized, \`Grade \${normalized}\`]);
-  const section = normalized.match(/^(\d{1,2})[-/]([a-z])$/i);
-  const gradeNumber = normalized.match(/^(\d{1,2})$/)?.[1];
-  if (section) {
-    const [, number, letter] = section;
-    labels.add(\`\${number}-\${letter.toUpperCase()}\`);
-    labels.add(\`\${number}/\${letter.toUpperCase()}\`);
-    labels.add(\`Grade \${number}-\${letter.toUpperCase()}\`);
-  }
-  if (section || gradeNumber) {
-    const number = section?.[1] ?? gradeNumber!;
-    labels.add(number);
-    labels.add(\`Grade \${number}\`);
-  }
-  return [...labels];
-}
 
 async function getYouTubeMetadata(videoId: string) {
   const apiKey = process.env.YOUTUBE_API_KEY;
@@ -115,8 +95,7 @@ export async function GET(request: Request) {
   } else {
     query.status = "approved";
     if (!teacherRoles.has(user.role)) {
-      const grade = user.classGrade?.trim() ?? "";
-      const labels = equivalentGradeLabels(grade);
+      const labels = gradeTargetLabels(user.classGrade);
       query.$or = [
         { targetGrades: "*" },
         ...(labels.length ? [{ targetGrades: { $in: labels } }] : []),
