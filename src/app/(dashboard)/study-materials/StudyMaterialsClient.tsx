@@ -299,15 +299,49 @@ function UploadForm({ onDone }: { onDone: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const fd = new FormData();
-      fd.set("file", file);
-      fd.set("bucket", "study-materials");
-      const up = await fetch("/api/upload", { method: "POST", body: fd });
-      const upJson = await up.json();
-      if (!up.ok) throw new Error(typeof upJson.error === "string" ? upJson.error : "Upload failed");
-      // /api/upload stages into pendingMedia for posts; study-materials uses the
-      // driver key/url directly. Re-upload through the study path requires the key.
-      const media = upJson.media as { bucket: string; key: string; url: string };
+      const mime = file.type || "application/octet-stream";
+      const presign = await fetch("/api/upload/presign-study-material", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, mime, size: file.size }),
+      });
+      const presignJson = await presign.json();
+      if (!presign.ok) throw new Error(typeof presignJson.error === "string" ? presignJson.error : "Could not prepare upload");
+
+      let media: { bucket: string; key: string; url: string };
+      if (presignJson.direct === true) {
+        // The file bytes go straight from the browser to Cloudflare R2. They
+        // never pass through a serverless function or consume its memory.
+        const put = await fetch(presignJson.uploadUrl as string, {
+          method: "PUT",
+          headers: { "Content-Type": mime },
+          body: file,
+        });
+        if (!put.ok) throw new Error("Direct upload failed. Please retry.");
+        const complete = await fetch("/api/upload/complete-study-material", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bucket: presignJson.bucket,
+            key: presignJson.key,
+            fileName: file.name,
+            mime,
+            size: file.size,
+          }),
+        });
+        const completed = await complete.json();
+        if (!complete.ok) throw new Error(typeof completed.error === "string" ? completed.error : "Could not verify uploaded file");
+        media = completed.media as { bucket: string; key: string; url: string };
+      } else {
+        // Local development keeps the existing server-mediated storage path.
+        const fd = new FormData();
+        fd.set("file", file);
+        fd.set("bucket", "study-materials");
+        const up = await fetch("/api/upload", { method: "POST", body: fd });
+        const upJson = await up.json();
+        if (!up.ok) throw new Error(typeof upJson.error === "string" ? upJson.error : "Upload failed");
+        media = upJson.media as { bucket: string; key: string; url: string };
+      }
       const res = await fetch("/api/study-materials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -325,7 +359,7 @@ function UploadForm({ onDone }: { onDone: () => void }) {
           bucket: "study-materials",
           key: media.key,
           url: media.url,
-          mime: file.type || "application/octet-stream",
+          mime,
           size: file.size,
           fileName: file.name,
         }),
