@@ -125,6 +125,14 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
     // The cache key is account-scoped so a shared iPad cannot reuse another
     // student's grade-filtered library.
     router.prefetch("/study-materials");
+    const warmKey = `dyne:study-materials:v1:${profile.id}:sort=newest&limit=30`;
+    try {
+      const existing = sessionStorage.getItem(warmKey);
+      if (existing) {
+        const parsed = JSON.parse(existing) as { savedAt?: number };
+        if (typeof parsed.savedAt === "number" && Date.now() - parsed.savedAt < 45_000) return;
+      }
+    } catch { /* Continue with a fresh warm request if the cache is unreadable. */ }
     const timer = window.setTimeout(() => {
       void fetch("/api/study-materials?sort=newest&limit=30", { cache: "no-store" })
         .then(async (response) => {
@@ -133,7 +141,7 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
           if (!Array.isArray(data.materials)) return;
           try {
             sessionStorage.setItem(
-              `dyne:study-materials:v1:${profile.id}:sort=newest&limit=30`,
+              warmKey,
               JSON.stringify({
                 savedAt: Date.now(),
                 materials: data.materials,
