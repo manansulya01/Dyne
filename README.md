@@ -44,6 +44,9 @@ Dyne is a Next.js App Router application. Before deploying:
 
 1. Create a dedicated production MongoDB database and configure `MONGODB_URI` and `MONGODB_DB` in the host's secret environment settings. Never use `dyne_dev` in production.
 2. Configure object storage: `STORAGE_DRIVER=r2` and the required `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_PUBLIC_BASE_URL` values.
+
+   - For the `study-materials` bucket, configure an R2 CORS rule for the exact Dyne app origins (production and any active preview origins): allow **PUT**, allow the **Content-Type** request header, expose **ETag**, and set a reasonable max age (for example 3600 seconds). Do not use a wildcard origin for authenticated school uploads.
+   - Study-material downloads use short-lived signed R2 URLs, so large files bypass the app server and support byte-range requests. In production, study-material uploads also use short-lived direct browser-to-R2 PUT URLs; the app verifies object size, MIME metadata, ownership and file signatures before registering the material. Local development falls back to the local storage driver.
 3. Set a unique, randomly generated `AUTH_SECRET` of at least 32 characters and set `NEXT_PUBLIC_SITE_URL` to the production origin. Do not use the development fallback.
 4. Deploy only after the CI checks pass. Then test signup, login, media upload, feed posting, and group chat against the intended production environment.
 5. Bootstrap the first `super_admin` through the documented one-time flow and remove the bootstrap secret immediately.
