@@ -23,12 +23,43 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Save original dependency manifests
+        run: |
+          cp package.json /tmp/dyne-package.before.json
+          cp package-lock.json /tmp/dyne-lock.before.json
       - name: Upgrade directly affected toolchain packages
         run: |
           npm install --save-exact next@16.4.6
           npm install --save-dev --save-exact eslint-config-next@16.4.6 vitest@5.1.0 @types/node@24
       - name: Apply compatible transitive security updates
         run: npm audit fix
+      - name: Build compact dependency patch
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const before = JSON.parse(fs.readFileSync("/tmp/dyne-lock.before.json", "utf8"));
+          const after = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+          const changed = {};
+          for (const [path, entry] of Object.entries(after.packages || {})) {
+            if (JSON.stringify(before.packages?.[path]) !== JSON.stringify(entry)) changed[path] = entry;
+          }
+          const removed = Object.keys(before.packages || {}).filter((path) => !(path in (after.packages || {})));
+          const patch = {
+            packageJson: JSON.parse(fs.readFileSync("package.json", "utf8")),
+            lockfile: {
+              name: after.name,
+              version: after.version,
+              lockfileVersion: after.lockfileVersion,
+              requires: after.requires,
+              root: after.packages?.[""] || {},
+              changed,
+              removed,
+            },
+          };
+          fs.writeFileSync("dependency-patch.json", JSON.stringify(patch));
+          console.log("Changed package-lock entries:", Object.keys(changed).length);
+          console.log("Removed package-lock entries:", removed.length);
+          NODE
       - name: Require no high or critical advisories
         run: npm audit --audit-level=high
       - name: Type-check
@@ -51,4 +82,5 @@ jobs:
           path: |
             package.json
             package-lock.json
+            dependency-patch.json
           if-no-files-found: error
