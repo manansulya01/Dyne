@@ -52,6 +52,20 @@ Dyne is a Next.js App Router application. Before deploying:
 5. Deploy only after the CI checks pass. Then test signup, login, media upload, feed posting, and group chat against the intended production environment.
 6. Bootstrap the first `super_admin` through the documented one-time flow and remove the bootstrap secret immediately.
 
+## CTO demo data
+
+Administrators can open **Admin console → CTO demo data → Load demo data** to add sample feed posts, campus announcements, Grade 10 study-material entries, and a curated video. The sample PDF is a public W3C test fixture, not a school document. Demo records are tagged with a batch identifier; **Restore / remove demo data** deletes only those tagged records. The seeder does not create fake login accounts, alter real users, or overwrite existing content. The action is admin-only and audited.
+
+Load the sample content before a presentation, then use Restore / remove demo data afterward. Refresh the Feed, Announcements, Study Materials, and Videos pages to see the sample content.
+
+## File-transfer performance
+
+- Study-material uploads use short-lived browser-to-R2 PUT URLs, followed by server-side metadata, ownership, and file-signature verification. The app server does not receive the file bytes.
+- Study-material downloads redirect to short-lived signed R2 URLs. Large files therefore bypass the Next.js function and can use the object store's byte-range support.
+- Configure R2 CORS for the exact app origins and allow PUT plus the Content-Type header; expose ETag.
+- Announcement attachments currently render as links when an attachment URL is present. Their authoring/upload experience still needs the same direct-to-R2 presign/complete flow before announcement files can be considered optimized end-to-end.
+- Do not treat the architecture as proof of 3,000-user capacity. Run authenticated concurrent upload/download and announcement-feed load tests against the deployed MongoDB, Vercel, and R2 tiers before making a capacity or latency commitment.
+
 ## Verification commands
 
 ```bash
