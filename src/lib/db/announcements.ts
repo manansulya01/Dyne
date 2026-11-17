@@ -269,16 +269,9 @@ export async function announcementVisibilityFilterForViewer(
     or.push({ audience: "selected", audienceIds: viewer });
     return { $or: or };
   }
-  // Only actual staff roles may see staff/teacher audiences. Other account
-  // types (including club accounts) must not inherit staff visibility.
+  // Staff roles see the audiences appropriate to their role, but selected
+  // announcements are always checked against the explicit recipient list.
   const staffRoles = new Set(["teacher", "staff", "moderator", "admin", "super_admin"]);
-  if (staffRoles.has(opts.viewerRole)) {
-    return { audience: { $in: ["all", "students", "teachers", "staff", "selected"] } };
-  }
-
-  // Club and other non-student accounts get campus-wide announcements,
-  // announcements explicitly addressed to them, and their own communities.
-  // Never expose grade-, teacher-, or staff-targeted announcements by default.
   const memberships = await col(db, "communityMembers")
     .find({ userId: viewer } as never)
     .project({ communityId: 1 })
@@ -287,6 +280,27 @@ export async function announcementVisibilityFilterForViewer(
   const communityIds = memberships
     .map((membership) => (membership as unknown as { communityId?: ObjectId }).communityId)
     .filter((id): id is ObjectId => id instanceof ObjectId);
+
+  if (staffRoles.has(opts.viewerRole)) {
+    const allowedAudiences = opts.viewerRole === "teacher"
+      ? ["all", "students", "teachers"]
+      : ["all", "students", "teachers", "staff"];
+    const or: Record<string, unknown>[] = [
+      {
+        audience: { $in: allowedAudiences },
+        $or: [
+          { audienceCommunityId: null },
+          ...(communityIds.length ? [{ audienceCommunityId: { $in: communityIds } }] : []),
+        ],
+      },
+      { audience: "selected", audienceIds: viewer },
+    ];
+    return { $or: or };
+  }
+
+  // Club and other non-student accounts get campus-wide announcements,
+  // announcements explicitly addressed to them, and their own communities.
+  // Never expose grade-, teacher-, or staff-targeted announcements by default.
   const or: Record<string, unknown>[] = [
     { audience: "all", audienceClassGrade: null, audienceCommunityId: null },
     { audience: "selected", audienceIds: viewer },
