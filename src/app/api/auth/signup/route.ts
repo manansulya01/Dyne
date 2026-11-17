@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { isPublicSignupAllowed } from "@/lib/auth/signup-policy";
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/mongo/client";
 import { ensureIndexes } from "@/lib/mongo/collections";
@@ -13,6 +14,12 @@ import {
 } from "@/lib/auth/session";
 
 export async function POST(request: Request) {
+  if (!isPublicSignupAllowed(process.env.NODE_ENV, process.env.PUBLIC_SIGNUP_ENABLED)) {
+    return NextResponse.json(
+      { error: { _form: ["Registration is currently closed. Contact your school administrator."] } },
+      { status: 403 }
+    );
+  }
   const rl = rateLimit(`signup:${clientKey(request)}`, RATE_PRESETS.signup.limit, RATE_PRESETS.signup.windowMs);
   if (!rl.ok) {
     return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });

@@ -75,3 +75,12 @@ Announcement uploads use the dedicated private `announcement-attachments` bucket
 ## Load testing
 
 A read-only k6 scenario is available at `tests/load/dyne.js`. Follow `tests/load/README.md` and run it only against staging with synthetic accounts. The default profile reaches 100 virtual users; the opt-in profile ramps to 3,300. A completed run is required before claiming that the 3,300-account capacity target is met. The scenario does not cover writes, realtime fan-out or large concurrent downloads, which require separate controlled tests.
+
+
+## Browser upload CORS
+
+Configure CORS on every R2 bucket that accepts direct browser uploads, including `announcement-attachments` and `study-materials`. Allow only the exact production origin and approved preview origins; allow `PUT`, `GET`, and `HEAD`; allow the `Content-Type` request header; expose `ETag`; and set a reasonable preflight max age. Do not use a wildcard origin for private school content.
+
+## School account enrollment
+
+Production self-registration is closed unless `PUBLIC_SIGNUP_ENABLED=true` is explicitly configured. Keep it unset/false until the school has an approved identity policy, verified student/staff roster, and a controlled account-provisioning or invitation process. The current signup endpoint does not perform school-email verification; do not reopen public registration merely to make account creation convenient.
