@@ -120,7 +120,7 @@ describe("study materials", () => {
   it("only privileged roles can feature materials", async () => {
     const db = await getDb();
     const u = await makeUser("sm_u3");
-    const c = await createStudyMaterial(db, u, mat());
+    const c = await createStudyMaterial(db, u, mat({ key: u.toHexString() + "/abc123.pdf", url: "/api/files/study-materials/" + u.toHexString() + "/abc123.pdf" }));
     if (!c.ok) throw new Error("setup failed");
     expect((await moderateStudyMaterial(db, c.materialId, "moderator", "feature")).ok).toBe(false);
     expect((await moderateStudyMaterial(db, c.materialId, "admin", "feature")).ok).toBe(true);
