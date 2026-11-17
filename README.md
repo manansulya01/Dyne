@@ -7,24 +7,154 @@ Form, and Lucide icons.
 Tagline (used consistently across landing, about, and settings):
 **Your Campus, Your Community, Your Network.**
 
-## Getting Started
+## Getting Started (fresh device)
 
-1. Copy `.env.example` to `.env.local`. Its defaults are for local development only:
-   - `MONGODB_URI=mongodb://127.0.0.1:27017/dyne_dev`
-   - `MONGODB_DB=dyne_dev`
-   - `AUTH_SECRET` (set a unique random value; use at least 32 characters for production)
-   - `NEXT_PUBLIC_SITE_URL` (optional; defaults to the local origin)
-   - `STORAGE_DRIVER=local` for development (no cloud credentials needed)
-2. Install dependencies, start the local database, then the app in separate terminals:
+Follow this section when setting Dyne up on a new Mac, Windows PC, or Linux
+machine. A local MongoDB server does **not** need to be installed separately:
+the `db:dev` script starts the project's bundled development MongoDB binary.
+
+### 1. Install the prerequisites
+
+- **Git** — install from [git-scm.com](https://git-scm.com/downloads).
+- **Node.js 24 LTS** — install the current Node.js 24 release from
+  [nodejs.org](https://nodejs.org/). npm is included with Node.
+- **A terminal** — Terminal on macOS/Linux, PowerShell or Windows Terminal on
+  Windows.
+- Internet access for the first dependency install and the first MongoDB binary
+  download.
+
+Check the tools are available:
+
+```bash
+git --version
+node --version
+npm --version
+```
+
+The Node version should report `v24.x`. If a terminal was open during Node
+installation, close it and open a new one before checking again.
+
+### 2. Clone the repository
+
+```bash
+git clone https://github.com/manansulya01/Dyne.git
+cd Dyne
+```
+
+If you are setting up the active feature branch rather than the default branch,
+run:
+
+```bash
+git switch feature/youtube-curation-fast-material-library
+```
+
+### 3. Install packages and create your local environment
 
 ```bash
 npm ci
-npm run db:dev   # local MongoDB on 127.0.0.1:27017; data stays in .dev-mongo-data/
-npm run dev      # in a second terminal
 ```
 
-Open [http://localhost:3000](http://localhost:3000). If port 3000 is already occupied,
-start the app on another port with `npm run dev -- -p 3001`.
+Copy the example environment file to your private local config.
+
+**macOS / Linux:**
+
+```bash
+cp .env.example .env.local
+```
+
+**Windows PowerShell:**
+
+```powershell
+Copy-Item .env.example .env.local
+```
+
+The example file is already configured for local development:
+- `MONGODB_URI=mongodb://127.0.0.1:27017/dyne_dev`
+- `MONGODB_DB=dyne_dev`
+- `STORAGE_DRIVER=local` (local uploads; no R2 credentials needed)
+- `NEXT_PUBLIC_SITE_URL=http://localhost:3000`
+
+Before using the app beyond a local throwaway demo, replace the example
+`AUTH_SECRET` with a unique random secret of at least 32 characters. Generate
+one with `openssl rand -base64 48` if OpenSSL is installed, or use a trusted
+password manager's random generator. Keep `.env.local` private; it is
+gitignored and must never be committed.
+
+### 4. Start the local database
+
+Open **Terminal 1** in the Dyne repository and run:
+
+```bash
+npm run db:dev
+```
+
+Wait for the `MongoDB ready` message. Keep this terminal running. The database
+files are stored in `.dev-mongo-data/` and survive restarts. On first run,
+the MongoDB binary may be downloaded by the package; allow it to finish.
+
+### 5. Start Dyne
+
+Open **Terminal 2**, also in the Dyne repository:
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) in your browser. If port
+3000 is occupied, run `npm run dev -- -p 3001` and open
+[http://localhost:3001](http://localhost:3001).
+
+To stop the app, press Ctrl+C in Terminal 2. To stop the database, press Ctrl+C
+in Terminal 1. Your local database data remains on disk.
+
+### 6. Verify the setup (optional but recommended)
+
+In a third terminal:
+
+```bash
+npx tsc --noEmit
+npm run lint
+npm test -- --run
+npm run build
+```
+
+These commands check types, lint rules, tests, and the production build. The
+first test run may take longer while the local test MongoDB binary is downloaded.
+
+### Quick restart after the first setup
+
+You do not need to clone or reinstall packages again. From the Dyne folder,
+start the two terminals again:
+
+```bash
+# Terminal 1
+npm run db:dev
+
+# Terminal 2
+npm run dev
+```
+
+### Troubleshooting a new machine
+
+- **`node` or `npm` not found:** install Node.js 24, then open a new terminal.
+- **`npm ci` fails:** confirm you are in the cloned `Dyne` directory and
+  that Git/Node can access the internet; retry with `npm ci`.
+- **MongoDB binary download fails:** check network/proxy restrictions and retry
+  `npm run db:dev`. The script uses the bundled
+  `mongodb-memory-server` binary cache; no Docker daemon is required.
+- **Port 27017 is busy:** stop the other MongoDB process, or choose another port
+  by setting `DYNE_DEV_DB_PORT` in the environment and matching the port in
+  `MONGODB_URI` in `.env.local`.
+- **Port 3000 is busy:** use `npm run dev -- -p 3001`.
+- **App cannot connect to MongoDB:** make sure Terminal 1 still shows MongoDB
+  ready, and check that `MONGODB_URI` and `MONGODB_DB` in `.env.local`
+  match the local database settings above.
+- **Local uploads are not working:** confirm `STORAGE_DRIVER=local` and that
+  the app process can write to the project directory.
+
+Local development uses isolated local data and local file storage. It does not
+connect to the live school database or production object storage unless you
+deliberately replace the local environment settings.
 
 ## First administrator (secure bootstrap)
 
