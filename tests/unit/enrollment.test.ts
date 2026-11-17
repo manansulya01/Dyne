@@ -45,7 +45,7 @@ describe("gradeTargetLabels", () => {
   });
 
   it("returns generic labels for an unsectioned grade", () => {
-    expect(gradeTargetLabels("Grade 10")).toEqual(["Grade 10", "10", "Grade 10"]);
+    expect(gradeTargetLabels("Grade 10")).toEqual(["Grade 10", "10"]);
   });
 
   it("fails closed for a missing grade", () => {
