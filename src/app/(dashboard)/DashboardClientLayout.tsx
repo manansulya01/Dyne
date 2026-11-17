@@ -120,7 +120,7 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
   }, []);
 
   useEffect(() => {
-    if (!profile?.id) return;
+    if (!profile?.id || pathname.startsWith("/study-materials")) return;
     // Warm the first study-material page while the user is browsing elsewhere.
     // The cache key is account-scoped so a shared iPad cannot reuse another
     // student's grade-filtered library.
@@ -147,7 +147,7 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
         .catch(() => undefined);
     }, 1200);
     return () => window.clearTimeout(timer);
-  }, [profile?.id, router]);
+  }, [profile?.id, pathname, router]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
