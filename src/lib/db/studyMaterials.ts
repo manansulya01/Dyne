@@ -132,7 +132,7 @@ export async function listStudyMaterials(
   opts: {
     search?: string;
     subject?: string;
-    classGrade?: string;
+    classGrade?: string | string[];
     materialType?: StudyMaterialDoc["materialType"];
     tag?: string;
     teacher?: string;
@@ -163,7 +163,8 @@ export async function listStudyMaterials(
     q.$text = { $search: opts.search.trim().slice(0, 100) };
   }
   if (opts.subject) q.subject = opts.subject.trim();
-  if (opts.classGrade) q.classGrade = opts.classGrade.trim();
+  if (Array.isArray(opts.classGrade)) q.classGrade = { $in: opts.classGrade };
+  else if (opts.classGrade) q.classGrade = opts.classGrade.trim();
   if (opts.materialType) q.materialType = opts.materialType;
   if (opts.tag) q.tags = opts.tag.slice(0, 30);
   if (opts.teacher) q.teacher = opts.teacher;
