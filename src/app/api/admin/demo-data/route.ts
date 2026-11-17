@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const DEMO_PDF = "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
-const COLLECTIONS = ["posts", "announcements", "studyMaterials", "videos"] as const;
+const COLLECTIONS = ["posts", "announcements", "studyMaterials", "youtubeSuggestions"] as const;
 
 async function adminContext() {
   const auth = await withUser();
@@ -53,28 +53,5 @@ export async function POST() {
     { ...tag, title: "Science — Lab Safety Quick Guide", description: "Sample resource entry for demonstrating subject filters and grade access.", subject: "Science", classGrade: "10", topic: "Laboratory", materialType: "revision", tags: ["demo", "science", "lab"], teacher: user.displayName ?? "Demo Teacher", semester: "Term 1", academicYear: "2026–27", uploaderId: actorId, bucket: "study-materials", key: "demo/" + batchId + "/lab-guide.pdf", url: DEMO_PDF, demoDownloadUrl: DEMO_PDF, mime: "application/pdf", size: 13264, fileName: "lab-safety-guide.pdf", isRemoved: false, isFeatured: false, status: "approved", createdAt: new Date(now.getTime() - 900000), updatedAt: now },
   ];
   const videos = [
-    { ...tag, title: "Dyne Demo: Learning Library", description: "Sample entry showing the curated video library.", videoUrl: "https://www.youtube.com/watch?v=jNQXAC9IVRw", thumbnailUrl: "https://img.youtube.com/vi/jNQXAC9IVRw/hqdefault.jpg", creatorId: actorId, duration: null, viewCount: 0, category: "Education", orientation: "horizontal", aspectRatio: "16:9", moderationStatus: "approved", moderationReason: null, moderationScore: null, moderationSource: "demo", moderationProvider: null, moderationMediaAnalyzed: false, moderatedAt: now, createdAt: now, updatedAt: now },
+    { ...tag, videoId: "jNQXAC9IVRw", url: "https://www.youtube.com/watch?v=jNQXAC9IVRw", title: "Me at the zoo — sample curated video", description: "A sample entry demonstrating the moderated YouTube library.", channelTitle: "jawed", thumbnailUrl: "https://img.youtube.com/vi/jNQXAC9IVRw/hqdefault.jpg", duration: "PT19S", suggestedBy: actorId, suggestedByRole: user.role, suggestionNote: "Demo library entry", status: "approved", targetGrades: ["*"], reviewReason: null, reviewedBy: actorId, reviewedAt: now, createdAt: now, updatedAt: now },
   ];
-
-  await Promise.all([
-    col(db, "posts").insertMany(posts as never[]),
-    col(db, "announcements").insertMany(announcements as never[]),
-    col(db, "studyMaterials").insertMany(materials as never[]),
-    col(db, "videos").insertMany(videos as never[]),
-  ]);
-  await logAudit(db, { actorId: user.id, action: "demo_data.seed", targetType: "demo_batch", targetId: batchId, details: { posts: posts.length, announcements: announcements.length, studyMaterials: materials.length, videos: videos.length } });
-  return NextResponse.json({ success: true, batchId, counts: { posts: posts.length, announcements: announcements.length, studyMaterials: materials.length, videos: videos.length } }, { status: 201, headers: { "Cache-Control": "private, no-store" } });
-}
-
-export async function DELETE() {
-  const auth = await adminContext();
-  if ("response" in auth) return auth.response;
-  const { db, user } = auth;
-  const batchIds = await Promise.all(COLLECTIONS.map(async (name) => col(db, name).distinct("demoBatchId", { demoBatchId: { $exists: true } } as never)));
-  const ids = [...new Set(batchIds.flat().filter((id): id is string => typeof id === "string"))];
-  if (!ids.length) return NextResponse.json({ success: true, removed: 0 });
-  const results = await Promise.all(COLLECTIONS.map((name) => col(db, name).deleteMany({ demoBatchId: { $in: ids } } as never)));
-  const removed = results.reduce((sum, result) => sum + result.deletedCount, 0);
-  await logAudit(db, { actorId: user.id, action: "demo_data.restore", targetType: "demo_batch", details: { batchIds: ids, removed } });
-  return NextResponse.json({ success: true, removed }, { headers: { "Cache-Control": "private, no-store" } });
-}
