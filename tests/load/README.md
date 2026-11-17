@@ -6,7 +6,9 @@ Use this k6 scenario against a **staging deployment with synthetic test accounts
 
 - Install k6: https://grafana.com/docs/k6/latest/set-up/install-k6/
 - Deploy the candidate branch to a staging/preview environment.
-- Create a dedicated test account and sign in to obtain its `dyne_session` cookie value.
+- Create synthetic test accounts and sign in to obtain their `dyne_session` cookie values.
+- For the smoke profile, one dedicated test session can be supplied with `DYNE_SESSION_COOKIE`.
+- For the 3,300-VU profile, create a local JSON file containing at least 3,300 distinct session-cookie strings (one per synthetic account), and set `DYNE_SESSION_COOKIES_FILE` to that file. The script refuses the full profile with a single shared session.
 - Confirm that the test database contains no real student data and that R2 uses a test bucket.
 
 ## Smoke profile
@@ -32,10 +34,10 @@ The default profile ramps to 100 virtual users. Each simulated user repeatedly r
 Only after the smoke profile passes and the staging providers have enough capacity:
 
 ```bash
-DYNE_BASE_URL=https://your-staging-host.example DYNE_SESSION_COOKIE='test-session-value' DYNE_FULL_STRESS=1 k6 run tests/load/dyne.js
+DYNE_BASE_URL=https://your-staging-host.example DYNE_SESSION_COOKIES_FILE=/secure/path/dyne-sessions.json DYNE_FULL_STRESS=1 k6 run tests/load/dyne.js
 ```
 
-The full profile ramps through 100, 300, 1,000, 2,000 and 3,300 virtual users, holds at 3,300, then ramps down. It is intentionally opt-in because it can consume significant Vercel function, database and network capacity.
+The full profile ramps through 100, 300, 1,000, 2,000 and 3,300 virtual users, holds at 3,300, then ramps down. It is intentionally opt-in because it can consume significant Vercel function, database and network capacity. Keep the session file outside Git, restrict its file permissions, and use only synthetic accounts.
 
 ## Initial acceptance thresholds
 

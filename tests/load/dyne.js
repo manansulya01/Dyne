@@ -1,10 +1,19 @@
-/* global __ENV, __VU */
+/* global __ENV, __VU, open */
 import http from "k6/http";
 import { check, sleep } from "k6";
 
 const baseUrl = (__ENV.DYNE_BASE_URL || "").replace(/\/$/, "");
-const session = __ENV.DYNE_SESSION_COOKIE || "";
+const fallbackSession = __ENV.DYNE_SESSION_COOKIE || "";
+const sessionsFile = __ENV.DYNE_SESSION_COOKIES_FILE || "";
+const sessionCookies = sessionsFile ? JSON.parse(open(sessionsFile)) : [];
 const fullStress = __ENV.DYNE_FULL_STRESS === "1";
+
+if (!Array.isArray(sessionCookies) || sessionCookies.some((value) => typeof value !== "string")) {
+  throw new Error("DYNE_SESSION_COOKIES_FILE must contain a JSON array of session-cookie strings.");
+}
+const sessionForVu = (vu) => sessionCookies.length
+  ? sessionCookies[(vu - 1) % sessionCookies.length]
+  : fallbackSession;
 
 export const options = {
   stages: fullStress
@@ -38,9 +47,13 @@ const readEndpoints = [
 
 export function setup() {
   if (!baseUrl) throw new Error("Set DYNE_BASE_URL to a staging/preview deployment URL.");
-  if (!session) throw new Error("Set DYNE_SESSION_COOKIE to a dedicated test account session.");
+  const firstSession = sessionForVu(1);
+  if (!firstSession) throw new Error("Set DYNE_SESSION_COOKIE or DYNE_SESSION_COOKIES_FILE.");
+  if (fullStress && sessionCookies.length < 3300) {
+    throw new Error("The 3,300-VU profile requires at least 3,300 distinct synthetic test-account sessions.");
+  }
   const response = http.get(`${baseUrl}/api/health/db`, {
-    headers: { Cookie: `dyne_session=${session}` },
+    headers: { Cookie: `dyne_session=${firstSession}` },
     tags: { endpoint: "database-health" },
   });
   check(response, {
@@ -56,7 +69,7 @@ export default function (data) {
   const endpoint = readEndpoints[(__VU - 1) % readEndpoints.length];
   const response = http.get(`${data.baseUrl}${endpoint}`, {
     headers: {
-      Cookie: `dyne_session=${session}`,
+      Cookie: `dyne_session=${sessionForVu(__VU)}`,
       Accept: "application/json",
     },
     tags: { endpoint },
