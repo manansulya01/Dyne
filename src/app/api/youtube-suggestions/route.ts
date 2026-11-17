@@ -78,8 +78,10 @@ export async function GET(request: Request) {
   const review = searchParams.get("review") === "true";
   const limit = Math.min(50, Math.max(1, Number(searchParams.get("limit")) || 24));
   const cursor = searchParams.get("before");
-  const before = cursor ? new Date(cursor) : null;
-  const query: Record<string, unknown> = { };
+  const [cursorDate, cursorId] = cursor ? cursor.split("|", 2) : [];
+  const before = cursorDate ? new Date(cursorDate) : null;
+  const beforeObjectId = cursorId && /^[a-fA-F0-9]{24}$/.test(cursorId) ? toObjectId(cursorId) : null;
+  const query: Record<string, unknown> = {};
 
   if (review) {
     if (!teacherRoles.has(user.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -101,7 +103,14 @@ export async function GET(request: Request) {
         : [{ targetGrades: "*" }];
     }
   }
-  if (before && Number.isFinite(before.getTime())) query.createdAt = { $lt: before };
+  if (before && Number.isFinite(before.getTime())) {
+    query.$and = [{
+      $or: [
+        { createdAt: { $lt: before } },
+        ...(beforeObjectId ? [{ createdAt: before, _id: { $lt: beforeObjectId } }] : []),
+      ],
+    }];
+  }
 
   const rows = await col<YouTubeSuggestionDoc>(db, "youtubeSuggestions")
     .find(query as never)
@@ -127,7 +136,7 @@ export async function GET(request: Request) {
       createdAt: row.createdAt.toISOString(),
     })),
     hasMore,
-    cursor: page.length ? page[page.length - 1].createdAt.toISOString() : null,
+    cursor: page.length ? page[page.length - 1].createdAt.toISOString() + "|" + page[page.length - 1]._id.toHexString() : null,
   });
 }
 
