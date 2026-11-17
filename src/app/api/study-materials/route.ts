@@ -102,16 +102,19 @@ export async function GET(request: NextRequest) {
     includeOwnPending: mine ? user.id : undefined,
     sort,
     featuredOnly,
-    limit,
+    limit: limit + 1,
     before,
     beforeId,
   });
+  // Fetch one extra row to determine hasMore without an empty follow-up request.
+  const hasMore = items.length > limit;
+  const page = items.slice(0, limit);
   // Stable snake_case contract (download URLs gated server-side).
-  const mapped = items.map((m) => toStudyMaterialJSON(m as unknown as Record<string, unknown>));
+  const mapped = page.map((m) => toStudyMaterialJSON(m as unknown as Record<string, unknown>));
   return NextResponse.json({
     materials: mapped,
     cursor: mapped.length ? mapped[mapped.length - 1].created_at + "|" + mapped[mapped.length - 1].id : null,
-    hasMore: mapped.length === limit,
+    hasMore,
     canUpload: canUploadStudyMaterials(user.role),
   });
 }
