@@ -78,9 +78,13 @@ export async function GET(request: NextRequest) {
 
   // Students can browse only their enrolled grade. Ignore the client filter
   // for students so a modified request cannot expose another class's files.
-  let effectiveClassGrade = classGrade;
+  let effectiveClassGrade: string | string[] | undefined = classGrade;
   if (!["teacher", "staff", "moderator", "admin", "super_admin"].includes(user.role)) {
-    effectiveClassGrade = user.classGrade?.trim() || "__unassigned__";
+    const enrolledGrade = user.classGrade?.trim() ?? "";
+    const gradeNumber = enrolledGrade.match(/\d{1,2}/)?.[0];
+    effectiveClassGrade = enrolledGrade
+      ? [...new Set([enrolledGrade, ...(gradeNumber ? [gradeNumber, "Grade " + gradeNumber] : [])])]
+      : "__unassigned__";
   }
   const items = await listStudyMaterials(db, {
     search,
