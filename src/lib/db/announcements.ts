@@ -238,7 +238,7 @@ export async function publishAnnouncement(
  * whole campus. Students never see staff-only announcements, and a targeted
  * announcement is only listed for its real audience.
  */
-async function audienceFilterForViewer(
+export async function announcementVisibilityFilterForViewer(
   db: Db,
   opts: { viewerRole?: string; viewerId?: string }
 ): Promise<Record<string, unknown> | null> {
@@ -292,7 +292,7 @@ export async function listAnnouncements(
     ],
   };
   if (opts.authoredBy) filter.createdBy = toObjectId(opts.authoredBy);
-  const audience = await audienceFilterForViewer(db, opts);
+  const audience = await announcementVisibilityFilterForViewer(db, opts);
   if (audience) filter.$and = [...(filter.$and as unknown[]), audience];
 
   const rows = await col<AnnouncementDoc>(db, "announcements")

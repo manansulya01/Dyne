@@ -10,14 +10,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const schema = z.object({
-  bucket: z.literal("post-media"),
+  bucket: z.literal("announcement-attachments"),
   key: z.string().min(1).max(200),
   fileName: z.string().trim().min(1).max(200),
   mime: z.string().min(1).max(120),
   size: z.number().int().positive().max(50 * 1024 * 1024),
 });
 
-/** Verifies the uploaded object before returning its public attachment URL. */
+/** Verifies the uploaded object before returning its audience-gated private URL. */
 export async function POST(request: Request) {
   const auth = await withAnyPermission(["announcements.create"]);
   if (!auth.ok) return auth.response;

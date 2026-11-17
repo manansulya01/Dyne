@@ -15,6 +15,7 @@ export const storageBuckets = [
   "community-images",
   "event-images",
   "message-attachments",
+  "announcement-attachments",
   "video-thumbnails",
   "watch-videos",
   "reel-videos",
@@ -36,6 +37,7 @@ export const publicBuckets: ReadonlySet<string> = new Set([
 /** Buckets requiring an authenticated request to read. */
 export const privateBuckets: ReadonlySet<string> = new Set([
   "message-attachments",
+  "announcement-attachments",
   "watch-videos",
   "reel-videos",
   "story-media",
@@ -97,6 +99,17 @@ export const bucketPolicies: Record<
       "image/jpeg", "image/png", "image/webp", "image/gif",
       "video/mp4", "video/webm", "video/quicktime",
       "application/pdf", "text/plain",
+    ],
+  },
+  "announcement-attachments": {
+    maxBytes: 50 * 1024 * 1024,
+    mime: [
+      "image/jpeg", "image/png", "image/webp", "image/gif",
+      "application/pdf", "text/plain",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-powerpoint",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ],
   },
   "video-thumbnails": {

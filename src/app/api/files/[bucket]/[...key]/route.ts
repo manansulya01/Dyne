@@ -4,6 +4,8 @@ import { col } from "@/lib/mongo/collections";
 import { toObjectId } from "@/lib/mongo/ids";
 import { getSessionUser } from "@/lib/auth/session";
 import { isConversationMember } from "@/lib/db/chat";
+import { announcementVisibilityFilterForViewer } from "@/lib/db/announcements";
+import { canAccessGradeResource } from "@/lib/auth/enrollment";
 import {
   assertSafeKey,
   isStorageBucket,
@@ -61,6 +63,26 @@ export async function GET(_request: Request, { params }: Params) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
     }
+    if (rawBucket === "announcement-attachments") {
+      // The attachment is private even when the announcement is campus-wide.
+      // Reuse the same audience/time-window rules as the announcement listing.
+      const url = `/api/files/${rawBucket}/${key}`;
+      const audience = await announcementVisibilityFilterForViewer(db, {
+        viewerRole: user.role,
+        viewerId: user.id,
+      });
+      if (!audience) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      const now = new Date();
+      const announcement = await col(db, "announcements").findOne({
+        attachmentUrl: url,
+        $and: [
+          audience,
+          { $or: [{ startsAt: null }, { startsAt: { $lte: now } }] },
+          { $or: [{ endsAt: null }, { endsAt: { $gte: now } }] },
+        ],
+      } as never);
+      if (!announcement) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
     if (rawBucket === "study-materials") {
       // Removed or rejected materials stay hidden even via direct file URLs.
       const material = await col(db, "studyMaterials").findOne({ key } as never);
@@ -68,11 +90,7 @@ export async function GET(_request: Request, { params }: Params) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
       if (!["teacher", "staff", "moderator", "admin", "super_admin"].includes(user.role)) {
-        const enrolledGrade = user.classGrade?.trim().toLowerCase() ?? "";
-        const materialGrade = material.classGrade.trim().toLowerCase();
-        const enrolledNumber = enrolledGrade.match(/\d{1,2}/)?.[0];
-        const materialNumber = materialGrade.match(/\d{1,2}/)?.[0];
-        if (!enrolledGrade || (enrolledGrade !== materialGrade && (!enrolledNumber || enrolledNumber !== materialNumber))) {
+        if (!canAccessGradeResource(user.classGrade, material.classGrade)) {
           return NextResponse.json({ error: "Not found" }, { status: 404 });
         }
       }
@@ -126,7 +144,7 @@ export async function GET(_request: Request, { params }: Params) {
     status: 200,
     headers: {
       "Content-Type": mimeForKey(key),
-      "Cache-Control": "private, max-age=3600",
+      "Cache-Control": rawBucket === "announcement-attachments" ? "private, no-store" : "private, max-age=3600",
       "Content-Length": String(file.bytes.length),
       // User-uploaded bytes: never let browsers sniff them as HTML/JS.
       "X-Content-Type-Options": "nosniff",

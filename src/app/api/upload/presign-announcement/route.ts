@@ -28,13 +28,13 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
   let checked;
   try {
-    checked = validateUpload("post-media", parsed.data.mime, parsed.data.size, parsed.data.fileName);
+    checked = validateUpload("announcement-attachments", parsed.data.mime, parsed.data.size, parsed.data.fileName);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid file" }, { status: 400 });
   }
   const storage = getStorageDriver();
   if (!(storage instanceof R2StorageDriver)) return NextResponse.json({ direct: false }, { status: 200 });
   const key = buildKey(toObjectId(user.id).toHexString(), randomUUID().replace(/-/g, ""), checked.extension);
-  const uploadUrl = await storage.createUploadUrl("post-media", key, checked.mime, checked.size, 300);
-  return NextResponse.json({ direct: true, uploadUrl, bucket: "post-media", key, mime: checked.mime, size: checked.size, fileName: parsed.data.fileName, expiresIn: 300 }, { headers: { "Cache-Control": "private, no-store" } });
+  const uploadUrl = await storage.createUploadUrl("announcement-attachments", key, checked.mime, checked.size, 300);
+  return NextResponse.json({ direct: true, uploadUrl, bucket: "announcement-attachments", key, mime: checked.mime, size: checked.size, fileName: parsed.data.fileName, expiresIn: 300 }, { headers: { "Cache-Control": "private, no-store" } });
 }

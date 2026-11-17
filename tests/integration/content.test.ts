@@ -7,7 +7,7 @@ import {
   createBlog, listBlogs, getBlogBySlug, updateBlog, deleteBlog,
   upsertTimetableEntry, listTimetable, clearTimetable,
 } from "@/lib/db/content";
-import { createAnnouncement, listAnnouncements } from "@/lib/db/announcements";
+import { createAnnouncement, listAnnouncements, announcementVisibilityFilterForViewer } from "@/lib/db/announcements";
 import { createCommunity, joinCommunity } from "@/lib/db/communities";
 import { createPoll, listPolls, votePoll } from "@/lib/db/polls";
 
@@ -105,6 +105,7 @@ describe("dyne 2.0 content: blogs, announcements, timetable", () => {
       body: "Only Grade 9 needs to read this.",
       audience: "students",
       audienceClassGrade: "Grade 9",
+      attachmentUrl: `/api/files/announcement-attachments/${staff.toHexString()}/grade9.pdf`,
     });
     expect(campus.ok && targeted.ok).toBe(true);
 
@@ -134,6 +135,23 @@ describe("dyne 2.0 content: blogs, announcements, timetable", () => {
       (a) => String((a as unknown as { title: string }).title)
     );
     expect(staffView).toContain("Grade 9 only");
+
+    // The private attachment route uses this same audience filter. A Grade 10
+    // student must not fetch a Grade 9 attachment by copying its URL.
+    if (!targeted.ok) throw new Error("targeted announcement setup failed");
+    const attachmentUrl = `/api/files/announcement-attachments/${staff.toHexString()}/grade9.pdf`;
+    const canFetchAttachment = async (viewerId: typeof grade9) => {
+      const audience = await announcementVisibilityFilterForViewer(db, {
+        viewerRole: "student",
+        viewerId: viewerId.toHexString(),
+      });
+      return Boolean(await col(db, "announcements").findOne({
+        attachmentUrl,
+        $and: [audience ?? {}],
+      } as never));
+    };
+    expect(await canFetchAttachment(grade9)).toBe(true);
+    expect(await canFetchAttachment(grade10)).toBe(false);
   });
 
   it("runs community polls with one vote per member", async () => {

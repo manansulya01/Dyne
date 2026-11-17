@@ -6,6 +6,7 @@ import { requireSessionUser, toHttpError } from "@/lib/auth/session";
 import { getStorageDriver } from "@/lib/storage";
 import { R2StorageDriver } from "@/lib/storage/r2";
 import { mimeForKey } from "@/lib/storage/types";
+import { canAccessGradeResource } from "@/lib/auth/enrollment";
 
 /**
  * Gated download: authenticated users only; pending, rejected, and removed materials
@@ -33,11 +34,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   // Students can only retrieve materials for their own enrolled grade. Staff
   // roles retain cross-grade access for teaching and moderation.
   if (!["teacher", "staff", "moderator", "admin", "super_admin"].includes(user.role)) {
-    const enrolledGrade = user.classGrade?.trim().toLowerCase() ?? "";
-    const materialGrade = row.classGrade.trim().toLowerCase();
-    const enrolledGradeNumber = enrolledGrade.match(/\d{1,2}/)?.[0];
-    const materialGradeNumber = materialGrade.match(/\d{1,2}/)?.[0];
-    if (!enrolledGrade || (materialGrade !== enrolledGrade && (!enrolledGradeNumber || enrolledGradeNumber !== materialGradeNumber))) {
+    if (!canAccessGradeResource(user.classGrade, row.classGrade)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
   }
