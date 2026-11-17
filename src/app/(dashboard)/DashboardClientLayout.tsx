@@ -120,6 +120,36 @@ export function DashboardClientLayout({ profile, children }: DashboardClientLayo
   }, []);
 
   useEffect(() => {
+    if (!profile?.id) return;
+    // Warm the first study-material page while the user is browsing elsewhere.
+    // The cache key is account-scoped so a shared iPad cannot reuse another
+    // student's grade-filtered library.
+    router.prefetch("/study-materials");
+    const timer = window.setTimeout(() => {
+      void fetch("/api/study-materials?sort=newest&limit=30", { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) return;
+          const data = await response.json();
+          if (!Array.isArray(data.materials)) return;
+          try {
+            sessionStorage.setItem(
+              `dyne:study-materials:v1:${profile.id}:sort=newest&limit=30`,
+              JSON.stringify({
+                savedAt: Date.now(),
+                materials: data.materials,
+                cursor: data.cursor ?? null,
+                hasMore: Boolean(data.hasMore),
+                canUpload: data.canUpload === true,
+              }),
+            );
+          } catch { /* Cache is an optimization; never block navigation. */ }
+        })
+        .catch(() => undefined);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [profile?.id, router]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
