@@ -50,6 +50,11 @@ export async function createStudyMaterial(
 
   const now = new Date();
   const uploader = toObjectId(uploaderId);
+  // Storage keys are owner-scoped; never allow a teacher to publish another
+  // account's private object by guessing or reusing its key.
+  if (!input.key.startsWith(uploader.toHexString() + "/")) {
+    return { ok: false as const, reason: "bad_key" as const };
+  }
   const title = input.title.trim().slice(0, 200);
   const description = input.description?.trim().slice(0, 2000) || null;
 
