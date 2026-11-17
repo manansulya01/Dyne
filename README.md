@@ -45,7 +45,7 @@ Dyne is a Next.js App Router application. Before deploying:
 1. Create a dedicated production MongoDB database and configure `MONGODB_URI` and `MONGODB_DB` in the host's secret environment settings. Never use `dyne_dev` in production.
 2. Configure object storage: `STORAGE_DRIVER=r2` and the required `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_PUBLIC_BASE_URL` values.
 
-   - For the `study-materials` bucket, configure an R2 CORS rule for the exact Dyne app origins (production and any active preview origins): allow **PUT**, allow the **Content-Type** request header, expose **ETag**, and set a reasonable max age (for example 3600 seconds). Do not use a wildcard origin for authenticated school uploads.
+   - For the `study-materials` and `post-media` buckets, configure an R2 CORS rule for the exact Dyne app origins (production and any active preview origins): allow **PUT**, allow the **Content-Type** request header, expose **ETag**, and set a reasonable max age (for example 3600 seconds). Do not use a wildcard origin for authenticated school uploads.
    - Study-material downloads use short-lived signed R2 URLs, so large files bypass the app server and support byte-range requests. In production, study-material uploads also use short-lived direct browser-to-R2 PUT URLs; the app verifies object size, MIME metadata, ownership and file signatures before registering the material. Local development falls back to the local storage driver.
 3. For the moderated YouTube library, create a Google Cloud API key with YouTube Data API v3 enabled and configure `YOUTUBE_API_KEY` as a server-only secret. Without it, video suggestions will show a clear configuration message; never expose this key in `NEXT_PUBLIC_*` variables.
 4. Set a unique, randomly generated `AUTH_SECRET` of at least 32 characters and set `NEXT_PUBLIC_SITE_URL` to the production origin. Do not use the development fallback.
@@ -60,10 +60,10 @@ Load the sample content before a presentation, then use Restore / remove demo da
 
 ## File-transfer performance
 
-- Study-material uploads use short-lived browser-to-R2 PUT URLs, followed by server-side metadata, ownership, and file-signature verification. The app server does not receive the file bytes.
+- Study-material and announcement-attachment uploads use short-lived browser-to-R2 PUT URLs, followed by server-side metadata, ownership, and file-signature verification. The app server does not receive the file bytes.
 - Study-material downloads redirect to short-lived signed R2 URLs. Large files therefore bypass the Next.js function and can use the object store's byte-range support.
 - Configure R2 CORS for the exact app origins and allow PUT plus the Content-Type header; expose ETag.
-- Announcement attachments currently render as links when an attachment URL is present. Their authoring/upload experience still needs the same direct-to-R2 presign/complete flow before announcement files can be considered optimized end-to-end.
+- Announcement attachments use the same direct browser-to-R2 pattern (with a local-storage fallback): short-lived upload URL, owner-scoped key, server-side size/MIME/signature verification, then the announcement stores the resulting media URL.
 - Do not treat the architecture as proof of 3,000-user capacity. Run authenticated concurrent upload/download and announcement-feed load tests against the deployed MongoDB, Vercel, and R2 tiers before making a capacity or latency commitment.
 
 ## Verification commands
