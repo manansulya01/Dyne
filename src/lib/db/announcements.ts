@@ -269,8 +269,32 @@ export async function announcementVisibilityFilterForViewer(
     or.push({ audience: "selected", audienceIds: viewer });
     return { $or: or };
   }
-  // Staff (teacher/admin/moderator) see campus-wide plus teaching audiences.
-  return { audience: { $in: ["all", "students", "teachers", "staff", "selected"] } };
+  // Only actual staff roles may see staff/teacher audiences. Other account
+  // types (including club accounts) must not inherit staff visibility.
+  const staffRoles = new Set(["teacher", "staff", "moderator", "admin", "super_admin"]);
+  if (staffRoles.has(opts.viewerRole)) {
+    return { audience: { $in: ["all", "students", "teachers", "staff", "selected"] } };
+  }
+
+  // Club and other non-student accounts get campus-wide announcements,
+  // announcements explicitly addressed to them, and their own communities.
+  // Never expose grade-, teacher-, or staff-targeted announcements by default.
+  const memberships = await col(db, "communityMembers")
+    .find({ userId: viewer } as never)
+    .project({ communityId: 1 })
+    .limit(100)
+    .toArray();
+  const communityIds = memberships
+    .map((membership) => (membership as unknown as { communityId?: ObjectId }).communityId)
+    .filter((id): id is ObjectId => id instanceof ObjectId);
+  const or: Record<string, unknown>[] = [
+    { audience: "all", audienceClassGrade: null, audienceCommunityId: null },
+    { audience: "selected", audienceIds: viewer },
+  ];
+  if (communityIds.length) {
+    or.push({ audience: "all", audienceCommunityId: { $in: communityIds } });
+  }
+  return { $or: or };
 }
 
 export async function listAnnouncements(
