@@ -43,8 +43,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   }
   // Demo PDFs are public, read-only fixtures. Only the exact trusted host is allowed;
   // ordinary materials always use the configured private object-storage driver.
-  const demoUrl = (row as StudyMaterialDoc & { demoDownloadUrl?: string }).demoDownloadUrl;
-  if (row.demoBatchId && typeof demoUrl === "string") {
+  const demoRecord = row as StudyMaterialDoc & { demoBatchId?: string; demoDownloadUrl?: string };
+  const demoUrl = demoRecord.demoDownloadUrl;
+  if (demoRecord.demoBatchId && typeof demoUrl === "string") {
     try {
       const parsed = new URL(demoUrl);
       if (parsed.protocol === "https:" && parsed.hostname === "www.w3.org" && parsed.pathname === "/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf") {
