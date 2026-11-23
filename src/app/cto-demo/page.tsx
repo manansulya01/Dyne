@@ -111,6 +111,7 @@ export default function CtoDemoPage() {
   const [dbReady, setDbReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [transfer, setTransfer] = useState<{ direction: "upload" | "download"; ms: number; size: number; name: string } | null>(null);
+  const [networkTransfer, setNetworkTransfer] = useState<{ direction: "upload" | "download"; ms: number; size: number; name: string } | null>(null);
   const [transferError, setTransferError] = useState("");
   const [query, setQuery] = useState("");
   const [joined, setJoined] = useState<string[]>([]);
@@ -164,19 +165,31 @@ export default function CtoDemoPage() {
     if (file.size <= 0 || file.size > MAX_FILE_BYTES) { setTransferError("Choose a file between 1 byte and 50 MB."); return; }
     setBusy(true);
     try {
-      const started = performance.now();
+      const networkSample = file.slice(0, Math.min(file.size, MAX_FILE_BYTES > 5 * 1024 * 1024 ? 5 * 1024 * 1024 : MAX_FILE_BYTES));
+      const networkStarted = performance.now();
+      const response = await fetch("/api/cto-demo/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream", "Cache-Control": "no-store" },
+        body: networkSample,
+        cache: "no-store",
+      });
+      const result = await response.json();
+      const networkMs = performance.now() - networkStarted;
+      if (!response.ok) throw new Error(result.error ?? "Network benchmark failed");
+      setNetworkTransfer({ direction: "upload", ms: networkMs, size: result.receivedBytes, name: file.name });
+      const localStarted = performance.now();
       const blob = new Blob([await file.arrayBuffer()], { type: file.type || "application/octet-stream" });
       const id = "upload-" + (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Date.now()));
       const record: Material = { id, title: file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " "), fileName: file.name, subject: "Uploaded by guest", grade: "Demo library", mime: file.type || "application/octet-stream", size: blob.size, blob, createdAt: Date.now(), transferMs: 0 };
       await saveMaterial(record);
-      const elapsed = performance.now() - started;
-      record.transferMs = elapsed;
+      const localMs = performance.now() - localStarted;
+      record.transferMs = localMs;
       await saveMaterial(record);
       await refreshMaterials();
-      setTransfer({ direction: "upload", ms: elapsed, size: file.size, name: file.name });
-      setNotice("File saved in this browser's private demo library. It has not been sent to the school's server.");
+      setTransfer({ direction: "upload", ms: localMs, size: file.size, name: file.name });
+      setNotice("Network benchmark completed; the full file was also saved in this browser's private demo library. No school server or database was changed.");
     } catch (error) {
-      setTransferError(error instanceof Error ? error.message : "The browser could not store this file.");
+      setTransferError(error instanceof Error ? error.message : "The transfer test or local save failed.");
     } finally { setBusy(false); }
   }
   async function downloadFile(item: Material) {
@@ -196,6 +209,25 @@ export default function CtoDemoPage() {
       setTransfer({ direction: "download", ms: elapsed, size: stored.size, name: stored.fileName });
     } catch (error) {
       setTransferError(error instanceof Error ? error.message : "Download failed.");
+    } finally { setBusy(false); }
+  }
+  async function benchmarkNetworkDownload(item: Material) {
+    setTransferError("");
+    setBusy(true);
+    try {
+      const bytes = 1024 * 1024;
+      const started = performance.now();
+      const response = await fetch("/api/cto-demo/transfer?bytes=" + bytes, { cache: "no-store" });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error ?? "Network download benchmark failed");
+      }
+      const payload = await response.arrayBuffer();
+      const elapsed = performance.now() - started;
+      if (payload.byteLength !== bytes) throw new Error("The test payload size did not match the requested size.");
+      setNetworkTransfer({ direction: "download", ms: elapsed, size: payload.byteLength, name: item.fileName });
+    } catch (error) {
+      setTransferError(error instanceof Error ? error.message : "Network download benchmark failed.");
     } finally { setBusy(false); }
   }
   async function removeMaterial(id: string) {
@@ -255,7 +287,7 @@ export default function CtoDemoPage() {
               </div>
 
               <div className="rounded-2xl border border-cyan-300/20 bg-[#0e1928] p-4 sm:p-5">
-                <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Wifi className="h-4 w-4 text-cyan-200" /><h2 className="text-sm font-bold">Live transfer benchmark</h2></div><p className="mt-1 text-xs text-slate-500">Measured on this device using the browser's persistent local file store.</p></div><span className={"rounded-full px-2.5 py-1 text-[10px] font-semibold " + (dbReady ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200")}>{dbReady ? "LOCAL STORE READY" : "INITIALISING"}</span></div>
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Wifi className="h-4 w-4 text-cyan-200" /><h2 className="text-sm font-bold">Local storage benchmark</h2></div><p className="mt-1 text-xs text-slate-500">Measures IndexedDB file save/read time on this device.</p></div><span className={"rounded-full px-2.5 py-1 text-[10px] font-semibold " + (dbReady ? "bg-emerald-400/10 text-emerald-200" : "bg-amber-400/10 text-amber-200")}>{dbReady ? "LOCAL STORE READY" : "INITIALISING"}</span></div>
                 <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_1fr]">
                   <div className="rounded-xl border border-white/[0.08] bg-white/[0.025] p-4"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Last upload / save</p><p className="mt-2 text-3xl font-bold tabular-nums text-cyan-100">{transfer?.direction === "upload" ? formatMs(transfer.ms) : "—"}<span className="ml-1 text-sm font-medium text-slate-400">ms</span></p><p className="mt-1 truncate text-[11px] text-slate-500">{transfer?.direction === "upload" ? transfer.name : "Upload a file to measure"}</p></div>
                   <div className="rounded-xl border border-white/[0.08] bg-white/[0.025] p-4"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Last download / read</p><p className="mt-2 text-3xl font-bold tabular-nums text-cyan-100">{transfer?.direction === "download" ? formatMs(transfer.ms) : "—"}<span className="ml-1 text-sm font-medium text-slate-400">ms</span></p><p className="mt-1 truncate text-[11px] text-slate-500">{transfer?.direction === "download" ? transfer.name : "Download a file to measure"}</p></div>
@@ -266,8 +298,17 @@ export default function CtoDemoPage() {
                 <p className="mt-3 text-[10px] leading-relaxed text-slate-500">Accuracy note: these milliseconds measure file reads/writes in this browser's IndexedDB on this device, not an internet, FTP, Vercel or Cloudflare R2 transfer. Network transfer timings must be benchmarked against the deployed storage service.</p>
               </div>
 
+              <div className="rounded-2xl border border-cyan-300/25 bg-gradient-to-br from-[#102a3d] to-[#101827] p-4 sm:p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><Zap className="h-4 w-4 text-cyan-200" /><h2 className="text-sm font-bold">Live network transfer · milliseconds</h2></div><p className="mt-1 text-xs text-slate-400">Real HTTP byte transfer between this browser and the Dyne Vercel preview. Upload is tested when you choose a file; download uses a 1 MB test payload.</p></div><span className="rounded-full bg-cyan-300/10 px-2.5 py-1 text-[10px] font-semibold text-cyan-100">LIVE REQUEST</span></div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-xl border border-white/10 bg-black/15 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Browser → Dyne · upload</p><p className="mt-2 text-3xl font-bold tabular-nums text-cyan-100">{networkTransfer?.direction === "upload" ? formatMs(networkTransfer.ms) : "—"}<span className="ml-1 text-sm font-medium text-slate-400">ms</span></p><p className="mt-1 text-[11px] text-slate-500">{networkTransfer?.direction === "upload" ? formatBytes(networkTransfer.size) + " sent · " + networkTransfer.name : "Choose a file to test upload"}</p></div>
+                  <div className="rounded-xl border border-white/10 bg-black/15 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Dyne → Browser · download</p><p className="mt-2 text-3xl font-bold tabular-nums text-cyan-100">{networkTransfer?.direction === "download" ? formatMs(networkTransfer.ms) : "—"}<span className="ml-1 text-sm font-medium text-slate-400">ms</span></p><p className="mt-1 text-[11px] text-slate-500">{networkTransfer?.direction === "download" ? formatBytes(networkTransfer.size) + " received · " + networkTransfer.name : "Run a 1 MB network test below"}</p></div>
+                </div>
+                {networkTransfer && <div className="mt-3 flex flex-wrap justify-between gap-2 rounded-xl bg-cyan-300/[0.07] px-4 py-3 text-xs"><span className="text-cyan-100">Measured {networkTransfer.direction} request duration</span><span className="font-semibold tabular-nums text-cyan-200">{throughput(networkTransfer.size, networkTransfer.ms)}</span></div>}
+                <p className="mt-3 text-[10px] leading-relaxed text-slate-500">This is a real HTTP network benchmark to the preview server, not FTP protocol timing or a measurement of Cloudflare R2. The test endpoint discards uploaded bytes and generates temporary download bytes; it stores no file and touches no school data. A production storage benchmark must run against the configured object-storage endpoint.</p>
+              </div>
               <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-bold">Study library</h2><p className="mt-0.5 text-xs text-slate-500">Grade 10 · Sample resources and your uploaded demo files</p></div><div className="relative w-full sm:w-64"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search materials…" className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.04] pl-9 pr-3 text-xs outline-none placeholder:text-slate-500 focus:border-cyan-300/40" /></div></div>
-              {!dbReady ? <div className="rounded-xl border border-white/10 p-8 text-center text-sm text-slate-500">Preparing the local study library…</div> : filteredMaterials.length === 0 ? <div className="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-500">No matching study materials.</div> : <div className="space-y-3">{filteredMaterials.map((item) => <article key={item.id} className="rounded-2xl border border-white/[0.09] bg-[#101827] p-4"><div className="flex flex-wrap items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-cyan-300/10 text-cyan-200"><FileText className="h-5 w-5" /></span><div className="min-w-0 flex-1"><p className="font-semibold">{item.title}</p><p className="mt-1 text-[11px] text-slate-500">{item.subject} · {item.grade} · {formatBytes(item.size)} · {item.fileName}</p></div><span className="rounded-full border border-emerald-300/15 bg-emerald-300/[0.06] px-2.5 py-1 text-[10px] font-medium text-emerald-200">Available</span></div><div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.07] pt-3"><span className="text-[10px] text-slate-500">{item.id.startsWith("sample-") ? "Curated sample file" : "Uploaded in this browser"}</span><div className="flex gap-2"><button type="button" disabled={busy} onClick={() => void downloadFile(item)} className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-cyan-300 px-3 text-[11px] font-bold text-slate-950 hover:bg-cyan-200 disabled:opacity-50"><ArrowDownToLine className="h-3.5 w-3.5" /> Download & measure</button>{!item.id.startsWith("sample-") && <button type="button" disabled={busy} aria-label="Remove uploaded file" onClick={() => void removeMaterial(item.id)} className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 text-slate-400 hover:border-rose-300/30 hover:text-rose-200 disabled:opacity-50"><Trash2 className="h-4 w-4" /></button>}</div></div></article>)}</div>}
+              {!dbReady ? <div className="rounded-xl border border-white/10 p-8 text-center text-sm text-slate-500">Preparing the local study library…</div> : filteredMaterials.length === 0 ? <div className="rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-500">No matching study materials.</div> : <div className="space-y-3">{filteredMaterials.map((item) => <article key={item.id} className="rounded-2xl border border-white/[0.09] bg-[#101827] p-4"><div className="flex flex-wrap items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-cyan-300/10 text-cyan-200"><FileText className="h-5 w-5" /></span><div className="min-w-0 flex-1"><p className="font-semibold">{item.title}</p><p className="mt-1 text-[11px] text-slate-500">{item.subject} · {item.grade} · {formatBytes(item.size)} · {item.fileName}</p></div><span className="rounded-full border border-emerald-300/15 bg-emerald-300/[0.06] px-2.5 py-1 text-[10px] font-medium text-emerald-200">Available</span></div><div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.07] pt-3"><span className="text-[10px] text-slate-500">{item.id.startsWith("sample-") ? "Curated sample file" : "Uploaded in this browser"}</span><div className="flex gap-2"><button type="button" disabled={busy} onClick={() => void downloadFile(item)} className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-cyan-300 px-3 text-[11px] font-bold text-slate-950 hover:bg-cyan-200 disabled:opacity-50"><ArrowDownToLine className="h-3.5 w-3.5" /> Download file</button><button type="button" disabled={busy} onClick={() => void benchmarkNetworkDownload(item)} className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-cyan-300/25 px-3 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-300/[0.08] disabled:opacity-50"><Wifi className="h-3.5 w-3.5" /> Test 1 MB network download</button>{!item.id.startsWith("sample-") && <button type="button" disabled={busy} aria-label="Remove uploaded file" onClick={() => void removeMaterial(item.id)} className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 text-slate-400 hover:border-rose-300/30 hover:text-rose-200 disabled:opacity-50"><Trash2 className="h-4 w-4" /></button>}</div></div></article>)}</div>}
             </>
           )}
 
