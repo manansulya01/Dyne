@@ -16,7 +16,7 @@ persistent object storage, and a measured 3,300-account load test must be
 verified before launch. A Vercel preview is for demonstration and testing; it
 is not the production service.
 
-For a CTO walkthrough, use the demo-data controls described below and remove
+For a campus walkthrough, use the demo-data controls described below and remove
 the demo batch after the presentation. Do not enter real student information
 into a preview environment.
 
