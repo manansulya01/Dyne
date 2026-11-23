@@ -195,9 +195,9 @@ Dyne is a Next.js App Router application. Before deploying:
 5. Deploy only after the CI checks pass. Then test signup, login, media upload, feed posting, and group chat against the intended production environment.
 6. Bootstrap the first `super_admin` through the documented one-time flow and remove the bootstrap secret immediately.
 
-## CTO demo data
+## Sample campus data
 
-Administrators can open **Admin console → CTO demo data → Load demo data** to add sample feed posts, campus announcements, Grade 10 study-material entries, and a curated video. The sample PDF is a public W3C test fixture, not a school document. Demo records are tagged with a batch identifier; **Restore / remove demo data** deletes only those tagged records. The seeder does not create fake login accounts, alter real users, or overwrite existing content. The action is admin-only and audited.
+Administrators can open **Admin console → sample campus data → Load demo data** to add sample feed posts, campus announcements, Grade 10 study-material entries, and a curated video. The sample PDF is a public W3C test fixture, not a school document. Demo records are tagged with a batch identifier; **Restore / remove demo data** deletes only those tagged records. The seeder does not create fake login accounts, alter real users, or overwrite existing content. The action is admin-only and audited.
 
 Load the sample content before a presentation, then use Restore / remove demo data afterward. Refresh the Feed, Announcements, Study Materials, and Videos pages to see the sample content.
 
