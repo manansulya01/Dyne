@@ -30,8 +30,9 @@ export async function POST(request: Request) {
   const limited = checkLimit(request);
   if (limited) return limited;
 
-  const declaredLength = Number(request.headers.get("content-length") ?? 0);
-  if (!Number.isFinite(declaredLength) || declaredLength <= 0 || declaredLength > MAX_BYTES) {
+  const rawLength = request.headers.get("content-length");
+  const declaredLength = rawLength === null ? null : Number(rawLength);
+  if (declaredLength !== null && (!Number.isFinite(declaredLength) || declaredLength <= 0 || declaredLength > MAX_BYTES)) {
     return NextResponse.json(
       { error: "Send a file between 1 byte and 5 MB for the live network benchmark." },
       { status: 413, headers: { "Cache-Control": "no-store" } }
